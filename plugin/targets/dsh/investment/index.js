@@ -5313,6 +5313,25 @@ function seedCommonIndices(ctx) {
     note: created.length > 0 ? `\u5DF2\u521B\u5EFA ${created.length} \u4E2A\u6307\u6570\u6807\u7684\uFF1B\u70B9\u300C\u5237\u65B0\u300D\u4ECE\u771F\u5B9E\u6570\u636E\u6E90\u62C9\u53D6\u4EF7\u683C\u4E0E\u4F30\u503C\uFF0C\u6570\u503C\u4E0D\u4F1A\u81EA\u52A8\u586B\u5145\u3002` : "\u5E38\u7528\u6307\u6570\u5747\u5DF2\u5B58\u5728\uFF1B\u70B9\u300C\u5237\u65B0\u300D\u66F4\u65B0\u6570\u636E\u3002"
   };
 }
+async function bootstrapIndices(ctx) {
+  const seeded = seedCommonIndices(ctx);
+  const ids = listInstruments(ctx.handle, { type: "INDEX" }).map((i) => i.id);
+  if (ids.length === 0) {
+    return {
+      seeded,
+      refresh: { total: 0, ok: 0, failed: 0, problems: [] },
+      note: "\u6CA1\u6709\u53EF\u5237\u65B0\u7684\u6307\u6570\u6807\u7684\u3002"
+    };
+  }
+  const { results } = await refreshMarketData(ctx, { instrumentIds: ids });
+  const ok2 = results.filter((r) => r.ok).length;
+  const problems = results.filter((r) => !r.ok).slice(0, 8).map((r) => ({ code: r.code, name: r.name, error: r.error ?? "\u6570\u636E\u6E90\u672A\u8FD4\u56DE\u6709\u6548\u6570\u636E" }));
+  return {
+    seeded,
+    refresh: { total: results.length, ok: ok2, failed: results.length - ok2, problems },
+    note: ok2 === results.length && results.length > 0 ? `\u5DF2\u5C31\u7EEA\uFF1A${results.length} \u4E2A\u6307\u6570\u7684\u884C\u60C5\u4E0E\u4F30\u503C\u6765\u81EA\u771F\u5B9E\u6570\u636E\u6E90\u3002` : `\u90E8\u5206\u6307\u6570\u672A\u53D6\u5230\u6570\u636E\uFF08${results.length - ok2}/${results.length}\uFF09\uFF1A\u53EF\u5728\u300C\u5237\u65B0\u6570\u636E\u300D\u91CD\u8BD5\uFF0C\u6216\u68C0\u67E5\u7F51\u7EDC\u4E0E\u6570\u636E\u6E90\u3002`
+  };
+}
 
 // plugin/server/src/services/rebalance.ts
 var DEFAULT_REBALANCE_THRESHOLD = 0.05;
@@ -5433,7 +5452,7 @@ function getRebalancePlan(ctx) {
 }
 
 // plugin/server/src/api.ts
-var APP_VERSION = "0.1.0";
+var APP_VERSION = "0.1.1";
 var MASKED_KEYS = /* @__PURE__ */ new Set([
   "totalMarketValue",
   "marketValue",
@@ -5771,6 +5790,7 @@ var HANDLERS = {
   }),
   get_decision_readiness: (ctx) => getDecisionReadiness(ctx),
   seed_common_indices: (ctx) => seedCommonIndices(ctx),
+  bootstrap_indices: (ctx) => bootstrapIndices(ctx),
   get_portfolio_risk: (ctx, params) => getPortfolioRisk(ctx, str2(params.range, "1y")),
   save_risk_settings: (ctx, params) => {
     const rate = Number(params.riskFreeRate);
@@ -5955,7 +5975,22 @@ function sendJson(response, status, payload) {
   response.end(body);
 }
 function cacheControlFor(file) {
-  return file.endsWith(".html") || file.endsWith(".json") ? "no-store" : "public, max-age=31536000, immutable";
+  return file.endsWith(".html") || file.endsWith(".json") ? "no-store" : "no-cache";
+}
+function etagFor(stat) {
+  return `W/"${stat.size.toString(16)}-${Math.round(stat.mtimeMs).toString(16)}"`;
+}
+function notModified(request, etag, mtime) {
+  const ifNoneMatch = request.headers["if-none-match"];
+  if (typeof ifNoneMatch === "string" && ifNoneMatch !== "") {
+    return ifNoneMatch.split(",").some((tag) => tag.trim() === etag);
+  }
+  const ifModifiedSince = request.headers["if-modified-since"];
+  if (typeof ifModifiedSince === "string" && ifModifiedSince !== "") {
+    const since = Date.parse(ifModifiedSince);
+    if (Number.isFinite(since)) return Math.floor(mtime.getTime() / 1e3) <= Math.floor(since / 1e3);
+  }
+  return false;
 }
 function resolveWebTarget(pathname) {
   let relative;
@@ -5977,10 +6012,23 @@ async function serveFile(request, response, file) {
     return false;
   }
   if (!stat.isFile()) return false;
+  const etag = etagFor(stat);
+  const cacheControl = cacheControlFor(file);
+  if (notModified(request, etag, stat.mtime)) {
+    response.writeHead(304, {
+      etag,
+      "last-modified": stat.mtime.toUTCString(),
+      "cache-control": cacheControl
+    });
+    response.end();
+    return true;
+  }
   response.writeHead(200, {
     "content-type": MIME.get(path3.extname(file).toLowerCase()) ?? "application/octet-stream",
     "content-length": stat.size,
-    "cache-control": cacheControlFor(file)
+    "cache-control": cacheControl,
+    etag,
+    "last-modified": stat.mtime.toUTCString()
   });
   if (request.method === "HEAD") {
     response.end();

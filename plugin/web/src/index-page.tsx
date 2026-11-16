@@ -40,6 +40,12 @@ interface IndexResult {
   rows: IndexRow[]; count: number; note: string;
   caliber: { market: string; category: string; stat: string; years: number };
 }
+/** bootstrap_indices：建常用指数标的 + 立刻对它们拉一次真实行情（两步一次调用）。 */
+interface BootstrapResult {
+  seeded: { created: string[]; existing: string[]; total: number; note: string };
+  refresh: { total: number; ok: number; failed: number; problems: { code: string; name: string; error: string }[] };
+  note: string;
+}
 type DisplayRow = IndexRow & { preview?: boolean };
 
 /* ---------------- 参考页列定义（bundle field[0] / field[1]） ---------------- */
@@ -191,6 +197,8 @@ export function IndexPage(props: {
   // onToast 在父组件每次渲染都是新函数，用 ref 固定，避免 load / useEffect 反复触发。
   const toastRef = useRef(props.onToast);
   toastRef.current = props.onToast;
+  /** 首屏自动引导（建标的 + 拉行情）是否已尝试过；失败也不自动重试，避免网络差时反复请求。 */
+  const bootstrappedRef = useRef(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -256,19 +264,40 @@ export function IndexPage(props: {
     </span>
   );
 
-  /** 一键导入常用指数：只建标的，不写任何数值；数值由刷新从真实数据源拉取。 */
-  const seedIndices = async (): Promise<void> => {
+  /**
+   * 一键可用：建常用指数标的 + 立刻拉一次真实行情。
+   *
+   * 只建标的会留下满屏「—」（指数页看起来「没有数据」），所以这里把两步合并。
+   * auto=true 时由首次进入的自动引导触发，同一挂载周期只跑一次，失败后不自动重试。
+   */
+  const bootstrap = useCallback(async (auto: boolean): Promise<void> => {
+    if (auto && bootstrappedRef.current) return;
+    bootstrappedRef.current = true;
     setBusy('seed');
     try {
-      const result = await rpc<{ created: string[]; existing: string[]; total: number; note: string }>('seed_common_indices');
-      toastRef.current(`已导入常用指数：新建 ${result.created.length} 个、已存在 ${result.existing.length} 个；请点「刷新数据」拉取行情`);
+      const result = await rpc<BootstrapResult>('bootstrap_indices');
+      const { seeded, refresh } = result;
+      const parts = [`新建 ${seeded.created.length} 个常用指数`];
+      parts.push(refresh.total === 0 ? '暂无可刷新的标的' : `行情 ${refresh.ok}/${refresh.total} 成功`);
+      const firstProblem = refresh.problems[0];
+      if (firstProblem) parts.push(`首个失败：${firstProblem.name}（${firstProblem.error}）`);
+      toastRef.current(`${auto ? '指数页首次使用，已自动' : ''}${parts.join('，')}`);
       await load();
+      setAnalytics(null);
     } catch (error) {
-      toastRef.current(`导入失败：${(error as Error).message}`);
+      toastRef.current(`导入常用指数失败：${(error as Error).message}`);
     } finally {
       setBusy('');
     }
-  };
+  }, [load]);
+
+  /** 空表 / 有标的但一个价格都没有 → 自动引导一次，让用户打开页面就能看到真实数值。 */
+  useEffect(() => {
+    if (loading || result === null) return;
+    const noData = result.rows.length === 0 || result.rows.every((row) => row.close === null);
+    if (!noData) return;
+    void bootstrap(true);
+  }, [loading, result, bootstrap]);
 
   const refreshData = async (): Promise<void> => {
     setBusy('refresh');
@@ -431,9 +460,9 @@ export function IndexPage(props: {
               ))}
             </div>
             <div className="idx-actions">
-              {realRows.length === 0 ? (
-                <button className="btn btn-sm btn-primary" disabled={busy !== ''} onClick={seedIndices}>
-                  {busy === 'seed' ? '导入中…' : '导入常用指数'}
+              {realRows.length === 0 || realRows.every((row) => row.close === null) ? (
+                <button className="btn btn-sm btn-primary" disabled={busy !== ''} onClick={() => void bootstrap(false)}>
+                  {busy === 'seed' ? '导入并拉取中…' : '导入常用指数并拉取行情'}
                 </button>
               ) : null}
               <button className="btn btn-sm" disabled={busy !== ''} onClick={refreshData}>
@@ -465,12 +494,14 @@ export function IndexPage(props: {
             </div>
           ) : null}
 
-          {/* 诚实边界提示 */}
+          {/* 诚实边界提示：区分「没有标的」「有标的但没行情」「有真实数据」三种状态 */}
           <div className="idx-notice">
-            <b>{realRows.length > 0 ? '本机数据' : '结构预览'}</b>
-            <span>{realRows.length > 0
+            <b>{realRows.length === 0 ? '结构预览' : realRows.some((row) => row.close !== null) ? '本机数据' : '待拉取行情'}</b>
+            <span>{realRows.length > 0 && realRows.some((row) => row.close !== null)
               ? `已载入 ${realRows.length} 个 INDEX 标的，数值来自本机 valuation_metrics / market_points。`
-              : '本机尚无 INDEX 标的估值数据，以下仅展示参考页的表格结构与交互；指数名称为参考页公开列表，所有数值列为「—」，不是真实行情。'}</span>
+              : realRows.length > 0
+                ? `已建 ${realRows.length} 个 INDEX 标的，但还没有行情与估值：点「导入常用指数并拉取行情」或「刷新数据」从真实数据源取数。`
+                : '本机还没有指数标的。打开本页会自动导入常用指数并拉取真实行情；下面是参考页的表格结构与交互，导入前数值列一律为「—」，不是真实行情。'}</span>
             <button className="link" onClick={() => setHelpOpen(true)}>查看口径</button>
           </div>
 
@@ -542,7 +573,8 @@ export function IndexPage(props: {
             {displayRows.length === 0 ? (
               <div className="empty">
                 当前筛选下没有指数标的。<br />
-                在「标的」中录入 type=INDEX 的指数并补齐估值指标后，此处会自动显示真实数值。
+                点上方「导入常用指数并拉取行情」可一键建 8 个常用宽基指数并从真实数据源取数；<br />
+                也可在「标的」里录入自己的 type=INDEX 指数。
               </div>
             ) : null}
             {loading ? <div className="idx-loading">读取本机指数数据…</div> : null}

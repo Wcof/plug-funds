@@ -6,7 +6,10 @@
  * 主题通过 URL 参数透传（?theme=dark|light），只覆盖本次渲染、不写回。
  */
 window.__ModuleLoader__.load({
-  id: 'plugfunds-investment',
+  // 必须等于 package.json 的包名：宿主按包名从客户端模块图里取 factory，
+  // 注册到别的 id（例如 cordis.patch.yml 的 row id）会命中
+  // “no registered factory for "<包名>"”，整块侧栏入口静默不出现。
+  id: '@plug-funds/dsh-investment',
   factory(require) {
     const React = require('react');
     const h = React.createElement;

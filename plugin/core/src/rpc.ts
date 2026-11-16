@@ -82,6 +82,7 @@ export const RPC_METHODS = [
   'get_index_valuation',
   'get_decision_readiness',
   'seed_common_indices',
+  'bootstrap_indices',
   'get_portfolio_risk',
   'save_risk_settings',
   'get_correlation_matrix',

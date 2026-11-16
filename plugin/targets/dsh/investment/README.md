@@ -29,7 +29,7 @@ install_bundle target=<plugin/targets/dsh/investment 的绝对路径>
 
 ## 页面与接口
 
-- Host 同源托管 `GET /plug-funds/`（静态 SPA）与 `POST /plug-funds/api/rpc`（JSON-RPC 风格方法表，60 个方法）。
+- Host 同源托管 `GET /plug-funds/`（静态 SPA）与 `POST /plug-funds/api/rpc`（JSON-RPC 风格方法表，61 个方法）。
 - RPC 响应统一 `{ success, data, error, traceId }`；只接受同源 POST，响应 `Cache-Control: no-store`。
 - 错误码：`422 validation-error`（输入 / 外部数据校验失败）、`404 not-found`、账本冲突 `422`、schema 冲突 `409`、未知方法 `404 unknown-method`、程序故障 `500 internal-error`。
 - 「隐藏金额」只掩码展示类响应（含总资产 / 现金合计 / 覆盖市值）；导出 / 备份 / 配置 / AI / 导入 / 恢复等数据出口不受影响，导出的 JSON 始终含真实数值。

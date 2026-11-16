@@ -16,8 +16,20 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const defaultTarball = path.resolve(scriptDir, '..', '..', 'integrations', 'dsh', 'dist', 'plug-funds-dsh-investment-0.1.0.tgz');
-const tarball = path.resolve(process.argv[2] ?? defaultTarball);
+const distDir = path.resolve(scriptDir, '..', '..', 'integrations', 'dsh', 'dist');
+const bundleVersion = JSON.parse(
+  fs.readFileSync(path.join(scriptDir, '..', 'targets', 'dsh', 'investment', 'package.json'), 'utf8'),
+).version;
+/** 按包内版本号找 tarball；版本 bump 后不会因为硬编码文件名而失效。 */
+function defaultTarballPath() {
+  const preferred = path.join(distDir, `plug-funds-dsh-investment-${bundleVersion}.tgz`);
+  if (fs.existsSync(preferred) || !fs.existsSync(distDir)) return preferred;
+  const candidates = fs.readdirSync(distDir)
+    .filter((name) => name.startsWith('plug-funds-dsh-investment-') && name.endsWith('.tgz'))
+    .sort();
+  return candidates.length > 0 ? path.join(distDir, candidates[candidates.length - 1]) : preferred;
+}
+const tarball = path.resolve(process.argv[2] ?? defaultTarballPath());
 
 if (!fs.existsSync(tarball)) {
   console.error(`[verify-install] 找不到安装包：${tarball}\n请先执行 npm run pack:dsh`);
@@ -77,16 +89,26 @@ expect('cordis.patch.yml 的 id / name 与清单一致',
 
 const localeProblems = [];
 for (const lang of ['en', 'zh']) {
-  try { JSON.parse(fs.readFileSync(path.join(root, 'locale', `${lang}.json`), 'utf8')); }
-  catch (error) { localeProblems.push(`${lang}: ${error.message}`); }
+  try {
+    const locale = JSON.parse(fs.readFileSync(path.join(root, 'locale', `${lang}.json`), 'utf8'));
+    // 插件管理器读的是嵌套 meta.title / meta.description（扁平 "meta.title" 键会退化成包名）
+    if (typeof locale.meta?.title !== 'string' || typeof locale.meta?.description !== 'string') {
+      localeProblems.push(`${lang}: 缺少 meta.title / meta.description`);
+    }
+  } catch (error) { localeProblems.push(`${lang}: ${error.message}`); }
 }
-expect('locale JSON 合法（en / zh）', localeProblems.length === 0, localeProblems.join('; '));
+expect('locale JSON 合法且含嵌套 meta（en / zh）', localeProblems.length === 0, localeProblems.join('; '));
 
 const clientCode = fs.readFileSync(path.join(root, 'client.js'), 'utf8');
 expect('client.js 使用 window.__ModuleLoader__.load',
   clientCode.includes('__ModuleLoader__') && clientCode.includes('load('));
 expect('client.js 配对注入 sidebar.panellist / main',
   clientCode.includes('sidebar.panellist') && clientCode.includes("'main'"));
+// 宿主按「包名」在客户端模块图里取 factory；注册成别的 id（例如 cordis.patch.yml 的 row id）
+// 会命中 client-modules: no registered factory，整块侧栏入口静默不出现，且不报安装失败。
+const clientFactoryId = clientCode.match(/__ModuleLoader__\.load\(\{[\s\S]*?\bid:\s*['"]([^'"]+)['"]/)?.[1];
+expect('client.js 工厂 id 等于包名', clientFactoryId === manifest.name,
+  `实际 ${clientFactoryId ?? '未匹配'}，应为 ${manifest.name}`);
 
 const hostCode = fs.readFileSync(path.join(root, 'index.js'), 'utf8');
 const bareImports = [...hostCode.matchAll(/(?:from\s*|import\s*)(["'])([^"']+)\1/g)]
@@ -94,6 +116,8 @@ const bareImports = [...hostCode.matchAll(/(?:from\s*|import\s*)(["'])([^"']+)\1
   .filter((spec) => !spec.startsWith('node:') && !spec.startsWith('./') && !spec.startsWith('../'));
 expect('index.js 自包含（仅 node: 内置 / 相对路径）', bareImports.length === 0,
   bareImports.slice(0, 5).join(', '));
+// 指数页首次进入要「建标的 + 拉数」一步到位，产物里必须有这个入口，否则页面只能是满屏「—」。
+expect('index.js 暴露 bootstrap_indices（指数页一键建库 + 拉数）', hostCode.includes('bootstrap_indices'));
 
 // Zcode / MCP 形态：包内必须带 MCP 入口与清单，且清单工具数与实际一致。
 const mcpCode = fs.readFileSync(path.join(root, 'mcp/index.js'), 'utf8');
@@ -178,6 +202,19 @@ async function rpc(method, params = {}) {
 
 const spa = await fetch(`${base}/plug-funds/`);
 expect('同源 SPA 可访问（200 HTML）', spa.status === 200 && (await spa.text()).includes('id="root"'));
+
+// 静态资源没有 content hash，绝不能 immutable：否则升级后浏览器仍跑旧 app.js（页面看起来「改了没生效」）。
+const asset = await fetch(`${base}/plug-funds/app.js`);
+const assetCache = asset.headers.get('cache-control') ?? '';
+const assetEtag = asset.headers.get('etag');
+expect('app.js 可协商缓存（no-cache + ETag）',
+  asset.status === 200 && assetCache.includes('no-cache') && assetEtag !== null,
+  `cache-control=${assetCache} etag=${assetEtag}`);
+const revalidated = await fetch(`${base}/plug-funds/app.js`, {
+  headers: assetEtag === null ? {} : { 'If-None-Match': assetEtag },
+});
+expect('app.js 带 If-None-Match 时返回 304（命中缓存不重传）', revalidated.status === 304,
+  String(revalidated.status));
 const info = await rpc('get_app_info');
 expect('RPC get_app_info 可用', info.status === 200 && info.body.success === true,
   JSON.stringify(info.body).slice(0, 160));

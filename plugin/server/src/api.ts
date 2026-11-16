@@ -41,12 +41,12 @@ import { exportBackup, exportHoldingsCsv } from './services/backup.ts';
 import { refreshMarketData } from './services/refresh.ts';
 import { getIndexValuation } from './services/index-valuation.ts';
 import { getDecisionReadiness } from './services/decision-readiness.ts';
-import { seedCommonIndices } from './services/indices.ts';
+import { bootstrapIndices, seedCommonIndices } from './services/indices.ts';
 import { getPortfolioRisk, getCorrelationMatrix, saveRiskFreeRate } from './services/risk.ts';
 import { listCashAccounts, saveCashAccount, deleteCashAccount } from './repo/cash.ts';
 import { getRebalancePlan, saveRebalanceTargets, listRebalanceTargets } from './services/rebalance.ts';
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.1.1';
 
 /* ---------------- DASH-12 金额掩码 ---------------- */
 
@@ -401,6 +401,7 @@ const HANDLERS: Record<string, (ctx: ServiceContext, params: Record<string, unkn
   }),
   get_decision_readiness: (ctx) => getDecisionReadiness(ctx),
   seed_common_indices: (ctx) => seedCommonIndices(ctx),
+  bootstrap_indices: (ctx) => bootstrapIndices(ctx),
   get_portfolio_risk: (ctx, params) => getPortfolioRisk(ctx, str(params.range, '1y') as RangeKey),
   save_risk_settings: (ctx, params) => {
     const rate = Number(params.riskFreeRate);

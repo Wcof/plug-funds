@@ -56,10 +56,37 @@ function sendJson(response: import('node:http').ServerResponse, status: number, 
   response.end(body);
 }
 
+/**
+ * 静态资源缓存策略。
+ *
+ * 构建产物的文件名里没有 content hash（`app.js` / `app.css` 固定名字），因此**不能用
+ * `immutable`**：一旦浏览器把旧 bundle 锁成「一年内不再请求」，插件升级后用户看到的仍是旧页面
+ * （典型症状：功能明明改了、界面没变，甚至一直停在旧逻辑）。这里改成：
+ * - HTML / JSON：`no-store`（入口必须每次拿最新，才能引用新的资源版本）；
+ * - 其它资源：`no-cache` + `ETag` / `Last-Modified`，每次向宿主重验证，命中则 304 不带响应体，
+ *   既保证升级立刻生效，也不至于每次重传 300 KB。
+ */
 function cacheControlFor(file: string): string {
-  return file.endsWith('.html') || file.endsWith('.json')
-    ? 'no-store'
-    : 'public, max-age=31536000, immutable';
+  return file.endsWith('.html') || file.endsWith('.json') ? 'no-store' : 'no-cache';
+}
+
+/** 弱 ETag：大小 + mtime（构建产物整文件重写，两者组合足以区分版本）。 */
+function etagFor(stat: fs.Stats): string {
+  return `W/"${stat.size.toString(16)}-${Math.round(stat.mtimeMs).toString(16)}"`;
+}
+
+/** 协商缓存判定：If-None-Match 优先，其次 If-Modified-Since。 */
+function notModified(request: import('node:http').IncomingMessage, etag: string, mtime: Date): boolean {
+  const ifNoneMatch = request.headers['if-none-match'];
+  if (typeof ifNoneMatch === 'string' && ifNoneMatch !== '') {
+    return ifNoneMatch.split(',').some((tag) => tag.trim() === etag);
+  }
+  const ifModifiedSince = request.headers['if-modified-since'];
+  if (typeof ifModifiedSince === 'string' && ifModifiedSince !== '') {
+    const since = Date.parse(ifModifiedSince);
+    if (Number.isFinite(since)) return Math.floor(mtime.getTime() / 1000) <= Math.floor(since / 1000);
+  }
+  return false;
 }
 
 function resolveWebTarget(pathname: string): { kind: 'bad' | 'denied' | 'file'; file: string } {
@@ -83,10 +110,23 @@ async function serveFile(request: import('node:http').IncomingMessage, response:
     return false;
   }
   if (!stat.isFile()) return false;
+  const etag = etagFor(stat);
+  const cacheControl = cacheControlFor(file);
+  if (notModified(request, etag, stat.mtime)) {
+    response.writeHead(304, {
+      etag,
+      'last-modified': stat.mtime.toUTCString(),
+      'cache-control': cacheControl,
+    });
+    response.end();
+    return true;
+  }
   response.writeHead(200, {
     'content-type': MIME.get(path.extname(file).toLowerCase()) ?? 'application/octet-stream',
     'content-length': stat.size,
-    'cache-control': cacheControlFor(file),
+    'cache-control': cacheControl,
+    etag,
+    'last-modified': stat.mtime.toUTCString(),
   });
   if (request.method === 'HEAD') {
     response.end();

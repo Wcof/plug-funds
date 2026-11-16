@@ -1,4 +1,6 @@
 {
-  "meta.title": "投资工作站",
-  "meta.description": "本地优先的个人投资账本、行情、估值观察与 AI 分析"
+  "meta": {
+    "title": "投资工作站",
+    "description": "本地优先的个人投资账本、行情、估值观察与 AI 分析"
+  }
 }
