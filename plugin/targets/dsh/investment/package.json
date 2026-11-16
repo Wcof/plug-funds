@@ -1,0 +1,51 @@
+{
+  "name": "@plug-funds/dsh-investment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "个人投资工作站 · DeepSeek Harness 插件（本地优先，账本 + 行情 + 估值 + AI 分析）",
+  "engines": {
+    "dsh": ">=0.2.1-rc.3 <0.3.0",
+    "node": ">=22.13"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "web",
+    "mcp",
+    "README.md"
+  ],
+  "mcp": {
+    "transport": "stdio",
+    "entry": "./mcp/index.js",
+    "manifest": "./mcp/manifest.json",
+    "note": "同一份 server 层以 MCP 工具形式暴露；Zcode / 其他 MCP 宿主读 mcp/manifest.json。"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-sidebar-browser"
+      ]
+    },
+    "meta": {
+      "title": { "zh": "投资工作站", "en": "Investment Workstation" },
+      "description": { "zh": "个人投资账本、行情、估值观察与 AI 分析（本地优先）", "en": "Local-first investment ledger, quotes, valuation watch and AI analysis" }
+    }
+  }
+}

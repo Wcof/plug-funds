@@ -1,0 +1,59 @@
+{
+  "id": "plug-funds",
+  "name": "个人投资工作站",
+  "version": "0.1.0",
+  "description": "本机投资账本与决策支持：持仓 / 现金 / 指数估值 / 风险画像 / 再平衡建议 / 决策就绪度。数据保存在本机 SQLite，不上传云端。",
+  "vendor": "local",
+  "homepage": "https://github.com/local/plug-funds",
+  "license": "MIT",
+  "kinds": ["mcp-stdio"],
+  "runtime": {
+    "kind": "mcp-stdio",
+    "command": "node",
+    "args": ["../mcp/index.js"],
+    "transport": "stdio",
+    "protocolVersion": "2024-11-05",
+    "env": {
+      "PLUG_FUNDS_STATE_DIR": "${stateDir}"
+    }
+  },
+  "capabilities": {
+    "tools": true,
+    "resources": false,
+    "prompts": false
+  },
+  "tools": [
+    { "name": "get_dashboard_summary", "readOnly": true, "title": "组合总览" },
+    { "name": "list_positions", "readOnly": true, "title": "持仓明细" },
+    { "name": "get_position_detail", "readOnly": true, "title": "持仓详情" },
+    { "name": "get_holdings_valuation", "readOnly": true, "title": "持仓估值" },
+    { "name": "get_decision_readiness", "readOnly": true, "title": "决策就绪度" },
+    { "name": "get_portfolio_risk", "readOnly": true, "title": "组合风险画像" },
+    { "name": "get_correlation_matrix", "readOnly": true, "title": "持仓相关性" },
+    { "name": "get_rebalance_plan", "readOnly": true, "title": "再平衡计划" },
+    { "name": "list_cash_accounts", "readOnly": true, "title": "现金账户" },
+    { "name": "get_index_valuation", "readOnly": true, "title": "指数估值一览" },
+    { "name": "get_index_analytics", "readOnly": true, "title": "指数分析" },
+    { "name": "get_trading_calendar", "readOnly": true, "title": "交易日历" },
+    { "name": "refresh_market_data", "readOnly": false, "title": "刷新行情" },
+    { "name": "record_transaction", "readOnly": false, "title": "记录交易" },
+    { "name": "save_manual_price", "readOnly": false, "title": "录入手工价格" },
+    { "name": "save_cash_account", "readOnly": false, "title": "保存现金账户" },
+    { "name": "save_rebalance_targets", "readOnly": false, "title": "保存再平衡目标" }
+  ],
+  "permissions": {
+    "filesystem": ["${stateDir}"],
+    "network": ["qt.gtimg.cn", "web.ifzq.gtimg.cn", "push2.eastmoney.com", "api.fund.eastmoney.com"],
+    "notes": "行情为显式拉取（手动刷新或交易时段定时刷新），不做后台常驻轮询。"
+  },
+  "host": {
+    "dsh": {
+      "entry": "dsh/investment",
+      "note": "同一份 server 层同时挂 DSH 插件（SPA + webServer 路由）与 MCP 工具。"
+    },
+    "zcode": {
+      "entry": "manifest.json",
+      "note": "按本清单以 mcp-stdio 方式拉起 ../mcp/index.js；stateDir 由宿主注入。"
+    }
+  }
+}

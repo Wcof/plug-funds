@@ -1,0 +1,25 @@
+{
+  "name": "plug-funds",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "个人投资工作站 · DeepSeek Harness 插件（本地优先）",
+  "scripts": {
+    "test": "node --test plugin/test/*.test.ts",
+    "build": "node plugin/scripts/build.mjs",
+    "check": "node plugin/scripts/build.mjs --check && node plugin/scripts/verify-web.mjs && node --test plugin/test/*.test.ts",
+    "pack:dsh": "npm run build && node plugin/scripts/pack.mjs",
+    "verify:install": "node plugin/scripts/verify-install.mjs",
+    "verify:web": "node plugin/scripts/verify-web.mjs --browser"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

@@ -1,0 +1,3 @@
+- insert:
+    - id: plugfunds-investment
+      name: '@plug-funds/dsh-investment'
