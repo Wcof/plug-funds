@@ -1,6 +1,7 @@
 /** 官方参考资料纯解析。日期、产品分类和资料缺项均保留明确含义。 */
 import { csindexOfficialCode } from './index-identities.ts';
-export interface ReferenceStatus { state: 'VALID' | 'MISSING' | 'STALE' | 'SUSPECT' | 'CONFLICT'; reason: string | null }
+import type { IndexProfile } from './index-profile.ts';
+export interface ReferenceStatus { state: 'VALID' | 'MISSING' | 'STALE' | 'SUSPECT' | 'CONFLICT' | 'NOT_APPLICABLE'; reason: string | null }
 export interface FundReference {
   on: number | null;
   off: number | null;
@@ -23,6 +24,7 @@ export interface IndexReference {
   unavailable: Record<string, string>;
   evidence: { url: string; sha256: string }[];
   identity?: { officialCode: string; name: string; evidence: string; reason: string };
+  profile?: IndexProfile;
 }
 
 export function validReferenceDate(value: unknown, today: string): value is string {
@@ -84,14 +86,17 @@ export function parseFundReference(payload: any, provider: 'csindex' | 'cnindex'
     note: '仅统计官方关联目录列出的境内产品代码；按产品上市交易所或明确境外基金类型排除境外产品，不把指数 coverage 当产品地域。未上市的指数/联接基金归场外，类型缺失时仅采用完整基金名称明确为联接基金的记录。A/C 份额不推断合并；空目录只表示该目录列出 0 条，不证明全市场无基金。' };
 }
 
-/** PDF 文本仅接受身份、日期、人民币及计算用股本口径均可核实的单张。 */
-export function parseCsindexFactsheet(text: string, code: string, today: string) {
+/** 非人民币资料须先由同码官方基本资料独立确认计价币；不做货币换算。 */
+export function parseCsindexFactsheet(text: string, code: string, today: string, expectedCurrency: IndexProfile['currency'] = 'CNY') {
   const match = text.match(/^(?:\s*)(\d{4})年(\d{1,2})月(\d{1,2})日/);
   const date = match ? `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}` : null;
   if (!date || !validReferenceDate(date, today)) throw new Error('中证单张缺少合法原始日期');
   const identity = /指数代码\s+([A-Z0-9]{6})(?![A-Z0-9])/.exec(text)?.[1];
   if (identity !== csindexOfficialCode(code)) throw new Error('中证单张指数代码不匹配');
-  if (!/货币\s+人民币/.test(text)) throw new Error('中证单张货币不是已核实的人民币口径');
+  const currencies = { 人民币: 'CNY', 美元: 'USD', 港币: 'HKD' };
+  const currencyName = /货币\s+(人民币|美元|港币)/.exec(text)?.[1];
+  const currency = currencyName ? currencies[currencyName] : null;
+  if (!expectedCurrency || currency !== expectedCurrency) throw new Error('中证单张货币与已核实口径不一致');
   if (!/指数指标均采用个股[“"]计算用股本[”"]计算得出/.test(text)) throw new Error('中证单张未说明计算用股本口径');
   const number = (label: string, zero = false) => {
     const matches = [...text.matchAll(new RegExp(`${label}[ \\t]+([+-]?(?:\\d+(?:\\.\\d+)?|\\.\\d+))(?:%|[ \\t]*\\n|$)`, 'g'))];
@@ -104,6 +109,6 @@ export function parseCsindexFactsheet(text: string, code: string, today: string)
   const published = /发布日期\s+(\d{4})年(\d{1,2})月(\d{1,2})日/.exec(text);
   const publishDate = published ? `${published[1]}-${published[2].padStart(2, '0')}-${published[3].padStart(2, '0')}` : null;
   if (publishDate && !validReferenceDate(publishDate, today)) throw new Error('中证单张发布日期无效');
-  return { code, officialCode: identity, date, publishDate, pb: number('市净率'), pe: number('滚动市盈率'), dividendYield: number('股息率', true),
+  return { code, officialCode: identity, date, publishDate, currency, pb: number('市净率'), pe: number('滚动市盈率'), dividendYield: number('股息率', true),
     quality: (Date.parse(today) - Date.parse(date)) / 86400000 > 7 ? 'STALE' as const : 'FRESH' as const };
 }

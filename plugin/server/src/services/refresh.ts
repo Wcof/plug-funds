@@ -20,6 +20,8 @@ import { createCnindexProvider, type CnindexMetric } from '../market/cnindex.ts'
 import { saveCnindexMetrics } from './cnindex-valuation.ts';
 import { hasIndexYearEndBase, indexYearEndRange, saveIndexHistory } from './index-history.ts';
 import { CSINDEX_IDENTITIES } from '../market/index-identities.ts';
+import { getIndexReference } from '../repo/index-reference.ts';
+import { indexMetricApplicability } from '../market/index-profile.ts';
 import { detectConflict, type QuoteCandidate } from '../market/conflict.ts';
 import { fetchCsindexIndicator, snapshotToMetrics, type CsindexMetric } from '../market/csindex.ts';
 import {
@@ -402,6 +404,7 @@ export async function refreshMarketData(
 
     // PE / PB 历史分位：由已落库的历史截面积累自动计算（样本不足不写，不伪造）
     for (const key of ['pe', 'pb'] as const) {
+      if (instrument.type === 'INDEX' && indexMetricApplicability(getIndexReference(ctx.handle, instrument.id)?.profile, key)) continue;
       const current = currentMetrics.get(key);
       if (!current) continue;
       const ageDays = (Date.parse(today) - Date.parse(current.asOfDate)) / 86_400_000;

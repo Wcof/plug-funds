@@ -33,6 +33,7 @@ const csvPath = arg('--csv');
 const { effectiveHistoryPoints, metricHistory, latestValuationMetrics } = await import(path.join(repoRoot, 'plugin/server/src/repo/market.ts'));
 const { percentile } = await import(path.join(repoRoot, 'plugin/core/src/valuation.ts'));
 const { getIndexReference } = await import(path.join(repoRoot, 'plugin/server/src/repo/index-reference.ts'));
+const { indexMetricApplicability } = await import(path.join(repoRoot, 'plugin/server/src/market/index-profile.ts'));
 
 // openState 会建目录、更新 schema；审计必须直接只读打开，绝不隐式迁移。
 const handle = { db: new DatabaseSync(path.join(stateDir, 'data', 'invest.db'), { readOnly: true }) };
@@ -286,9 +287,12 @@ const counts = {};
 const addCount = (key) => { counts[key] = (counts[key] ?? 0) + 1; };
 
 for (const instrument of instruments) {
+  const reference = getIndexReference(handle, instrument.id);
+  const applicability = (key) => indexMetricApplicability(reference?.profile, key);
   const metrics = metricMap(instrument.id);
   const rawLatest = latestRawById.get(instrument.id) ?? new Map();
-  const latestMetrics = [...rawLatest.values()].sort((a, b) => String(a.metric_key).localeCompare(String(b.metric_key))).map(latestMetricDetails);
+  const latestMetrics = [...rawLatest.values()].sort((a, b) => String(a.metric_key).localeCompare(String(b.metric_key)))
+    .map((row) => ({ ...latestMetricDetails(row), ...(applicability(row.metric_key) ? { applicability: applicability(row.metric_key) } : {}) }));
   const peHistory = auditMetricHistory(instrument.id, 'pe');
   const pbHistory = auditMetricHistory(instrument.id, 'pb');
   const psHistory = auditMetricHistory(instrument.id, 'ps');
@@ -304,13 +308,13 @@ for (const instrument of instruments) {
   const firstValue = yearEndBase && daysBetween(yearEndBase.tradingDate, yearEnd) <= 14 ? num(yearEndBase.value) : null;
   const ytdReturn = close !== null && firstValue !== null && firstValue > 0 && points.at(-1)?.tradingDate >= yearStart
     ? (close / firstValue - 1) * 100 : null;
-  const pe = currentMetric(metrics, 'pe');
-  const pb = currentMetric(metrics, 'pb');
-  const ps = currentMetric(metrics, 'ps');
+  const pe = applicability('pe') ? null : currentMetric(metrics, 'pe');
+  const pb = applicability('pb') ? null : currentMetric(metrics, 'pb');
+  const ps = applicability('ps') ? null : currentMetric(metrics, 'ps');
   const dividend = currentMetric(metrics, 'dividend_yield');
   const turnover = currentMetric(metrics, 'turnover_rate');
   const roeByYear = new Map();
-  for (const p of roeHistory) roeByYear.set(p.asOfDate.slice(0, 4), p.value);
+  if (!applicability('roe')) for (const p of roeHistory) roeByYear.set(p.asOfDate.slice(0, 4), p.value);
   const roeYears = [3, 2, 1].map((offset) => String(Number(today.slice(0, 4)) - offset));
   const scale = rawLatest.get('scale_info');
   const marketValue = scaleValue(scale?.value);
@@ -319,7 +323,6 @@ for (const instrument of instruments) {
   const issues = [];
   const corrections = [];
 
-  const reference = getIndexReference(handle, instrument.id);
   const funds = reference?.funds ?? null;
   const publishStatus = reference?.publishStatus ?? (instrument.founded_date
     ? (validDate(instrument.founded_date) && instrument.founded_date <= today ? status('VALID') : status('SUSPECT', '发布日期非法或在未来'))
@@ -334,27 +337,29 @@ for (const instrument of instruments) {
     : Math.abs(ytdReturn) > 200 ? status('SUSPECT', '年初至今收益率绝对值 > 200%，属于极端值') : status('VALID');
   if (ytdStatus.state !== 'VALID') issues.push({ field: 'ytdReturn', ...ytdStatus });
 
-  const peStatus = fieldStatusForMetric(pe, 'pe');
-  const pbStatus = !pb && reference?.unavailable.pb ? status('MISSING', reference.unavailable.pb) : fieldStatusForMetric(pb, 'pb');
-  const psStatus = !ps && reference ? status('MISSING', reference.unavailable.ps) : fieldStatusForMetric(ps, 'ps');
+  const peStatus = applicability('pe') ?? fieldStatusForMetric(pe, 'pe');
+  const pbStatus = applicability('pb') ?? (!pb && reference?.unavailable.pb ? status('MISSING', reference.unavailable.pb) : fieldStatusForMetric(pb, 'pb'));
+  const psStatus = applicability('ps') ?? (!ps && reference ? status('MISSING', reference.unavailable.ps) : fieldStatusForMetric(ps, 'ps'));
   const divStatus = fieldStatusForMetric(dividend, 'dividend_yield');
   const turnoverStatus = fieldStatusForMetric(turnover, 'turnover_rate');
   for (const [field, s] of [['pe.current', peStatus], ['pb.current', pbStatus], ['ps.current', psStatus], ['dividendYield', divStatus], ['turnoverRate', turnoverStatus]]) {
     if (s.state !== 'VALID') issues.push({ field, ...s });
   }
 
-  const peStats = stats(peHistory, pe, peStatus);
-  const pbStats = stats(pbHistory, pb, pbStatus);
-  const psStats = stats(psHistory, ps, psStatus);
+  const applicableStats = (key, history, metric, state) => applicability(key)
+    ? { ...stats([], null, state), percentileStatus: applicability(key) } : stats(history, metric, state);
+  const peStats = applicableStats('pe', peHistory, pe, peStatus);
+  const pbStats = applicableStats('pb', pbHistory, pb, pbStatus);
+  const psStats = applicableStats('ps', psHistory, ps, psStatus);
   for (const [key, s] of [['pe.percentile', peStats], ['pb.percentile', pbStats], ['ps.percentile', psStats]]) {
     if (s.percentileStatus.state !== 'VALID') issues.push({ field: key, ...s.percentileStatus });
     if (s.excludedSourceSamples > 0) issues.push({ field: key, state: 'SUSPECT', reason: `历史包含 ${s.excludedSourceSamples} 个其他来源样本，已排除以保持同一来源口径` });
   }
 
   const roe = [0, 1, 2].map((i) => roeByYear.get(roeYears[i]) ?? null);
-  const roeStatus = roe.some((v) => v !== null) ? status('SUSPECT', '只有观察日期，财报年度与计算口径未核实，不能宣称为近 3 个财年的 ROE')
+  const roeStatus = applicability('roe') ?? (roe.some((v) => v !== null) ? status('SUSPECT', '只有观察日期，财报年度与计算口径未核实，不能宣称为近 3 个财年的 ROE')
     : roeHistory.length > 0 ? status('MISSING', '已有其他年份观测，但前 3 个日历年缺少可用 ROE 观测')
-      : reference ? status('MISSING', reference.unavailable.roe) : status('UNSUPPORTED', '项目未接入指数 ROE 数据源，不代表外部不存在该数据');
+      : reference ? status('MISSING', reference.unavailable.roe) : status('UNSUPPORTED', '项目未接入指数 ROE 数据源，不代表外部不存在该数据'));
   issues.push({ field: 'roe', ...roeStatus });
   if (marketValueStatus.state !== 'VALID') issues.push({ field: 'marketValue', ...marketValueStatus });
   const fundStatus = funds?.status ?? status('MISSING', reference?.unavailable.funds ?? '尚未取得官方关联产品清单');
@@ -365,6 +370,8 @@ for (const instrument of instruments) {
   corrections.push(...(removedPrematureClose.get(instrument.id) ?? []));
 
   const fieldStates = {
+    assetClass: reference?.profile && reference.profile.assetClass !== 'UNKNOWN' ? status('VALID', reference.profile.classification.reason)
+      : status('MISSING', reference?.profile?.classification.reason ?? '尚无官方资产类别资料'),
     publishDate: publishStatus,
     close: closeStatus,
     ytdReturn: ytdStatus,
@@ -380,6 +387,8 @@ for (const instrument of instruments) {
     marketValue: marketValueStatus,
     fundOn: fundStatus,
     fundOff: fundStatus,
+    indexCurrency: reference?.profile?.currency ? status('VALID', reference.profile.currencyReason)
+      : status('MISSING', reference?.profile?.currencyReason ?? '未取得官方计价币，不能用账本默认 CNY 代替'),
   };
   for (const state of Object.values(fieldStates)) addCount(state.state);
   rows.push({
@@ -407,6 +416,7 @@ for (const instrument of instruments) {
     fundOff: funds?.off ?? null,
     fundReference: funds,
     reference,
+    profile: reference?.profile ?? null,
     pe: { ...peStats, provider: pe?.provider ?? null, asOfDate: pe?.asOfDate ?? null },
     pb: { ...pbStats, provider: pb?.provider ?? null, asOfDate: pb?.asOfDate ?? null },
     ps: { ...psStats, provider: ps?.provider ?? null, asOfDate: ps?.asOfDate ?? null },
@@ -457,6 +467,8 @@ const report = {
     latestMetrics: '列出每个已存 metric_key 的最新非未来记录，保留原文、数值、日期、来源、质量及状态；主展示 PE 仍按官方优先口径选择，两者选择依据不同',
     rawData: '遍历全部 valuation_metrics 和 market_data 行；scale_info 按总市值文本解析，其余估值键按有限数值校验；行情值必须正且有限；逐行核查日历、未来日期、质量和误标收盘价',
     validState: 'VALID 只表示本地结构与已定义校验规则通过，不等于已逐笔向外部重新核实',
+    applicability: '官方样本类别确认的债券/基金指数标 NOT_APPLICABLE，不使用直接股票 PE/PB/PS/ROE 及派生值；原始观测仍列在 latestMetrics 并加 applicability 状态',
+    currency: '指数计价币来自 reference.profile.currency，点位不等同金额；meta.currency 保留旧账本元数据，不作为指数计价币依据',
   },
   databaseChecks: { instrumentCount: rows.length, integrityCheck, duplicateMetricKeys: duplicateKeys, badMetricDates: badDates, futureMetricDates: futureDates, rawDataChecks },
   counts,
@@ -472,14 +484,14 @@ const csvFields = [
   'ps.current', 'ps.percentile', 'ps.samples', 'roe', 'dividendYield', 'marketValue',
   'fieldStates', 'peComparison', 'corrections', 'issues',
   'turnoverRate', 'turnoverAsOfDate', 'turnoverProvider', 'turnoverQuality', 'marketValueAsOfDate', 'marketValueProvider', 'marketValueQuality',
-  'latestMetrics', 'meta', 'rawDataAnomalies',
+  'latestMetrics', 'meta', 'rawDataAnomalies', 'profile',
 ];
 const readField = (row, key) => {
   if (key.includes('.')) {
     const [a, b] = key.split('.');
     return row[a]?.[b] ?? null;
   }
-  if (['roe', 'fieldStates', 'peComparison', 'corrections', 'issues', 'latestMetrics', 'meta', 'rawDataAnomalies'].includes(key)) return JSON.stringify(row[key]);
+  if (['roe', 'fieldStates', 'peComparison', 'corrections', 'issues', 'latestMetrics', 'meta', 'rawDataAnomalies', 'profile'].includes(key)) return JSON.stringify(row[key]);
   return row[key] ?? null;
 };
 const csvEscape = (v) => `"${String(v ?? '').replaceAll('"', '""')}"`;

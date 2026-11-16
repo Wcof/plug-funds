@@ -4,7 +4,7 @@
 
 产品口径与需求见 PRD v1.4（`/Users/ldh/Downloads/investment-workstation-prd-v1.1.md`，文件名保留 v1.1）；架构决策见 `docs/design/optimization-plan.md`。
 
-数据补齐及逐项校验见 [2026-11-17 指数历史与身份核验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-17-index-history-review.md) ，前次资料快照见 [官方指数资料核验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-17-index-data-review.md) ；AI 链路的规则和验证见 [2026-11-16 数据与 AI 校验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-16-data-ai-review.md) 。
+数据补齐及逐项校验见 [2026-11-17 估值适用性与计价币核验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-17-index-applicability-review.md) ，前次资料快照见 [指数历史与身份核验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-17-index-history-review.md) ；AI 链路的规则和验证见 [2026-11-16 数据与 AI 校验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-16-data-ai-review.md) 。
 
 ## 安装（DSH ≥ 0.2.1-rc.3）
 
@@ -14,10 +14,10 @@
 # 从源码构建 + 打包
 npm install
 npm run pack:dsh
-# 产物：integrations/dsh/dist/plug-funds-dsh-investment-0.1.6.tgz
+# 产物：integrations/dsh/dist/plug-funds-dsh-investment-0.1.7.tgz
 
 # 安装到 DSH（在 DSH 的插件安装入口 / plugin_manager 中执行）
-install_bundle target=/绝对路径/integrations/dsh/dist/plug-funds-dsh-investment-0.1.6.tgz
+install_bundle target=/绝对路径/integrations/dsh/dist/plug-funds-dsh-investment-0.1.7.tgz
 ```
 
 开发迭代用目录链接（改代码后重启 DSH 窗口即生效）：
@@ -83,6 +83,8 @@ node plugin/scripts/verify-web.mjs           # 只跑静态层（无需 Chrome�
 参考资料通过上述离线脚本更新。`backfill:reference` 的 PDF 解析需要 Python 3 与 `pypdf`，可用 `--python /绝对路径/python3` 指定解释器；运行插件不需要 Python 或额外依赖。回填命令均须加 `--apply` 才写库，并在写入前备份。采集原文保存在所指定的 `.tmp/` 目录中，包含 URL、采集时间与 SHA-256，重放不把旧资料标成新采集。字段缺失、来源日期和缺样本原因同步到指数页及 CSV 导出。
 
 指数历史刷新会检查上年末基准：报价源长区间被截断时单独请求上年 12 月 17 日至 31 日，再尝试中证 / 国证官方日线；已有合格基准时不重复补取。官方日线校验代码、日期、收盘价及 OHLC，新增来源与已有同日收盘对照，差异超过 1% 保留双方并标冲突。`backfill:history` 支持 `--codes`、`--begin`、`--end` 和 `--offline`，离线模式核对已采集原文的 URL 与 SHA-256；连续 403 后停止对应来源，失败不解释为没有历史。
+
+指数资料同时保留发行方确认的样本资产类别与计价币。债券 / 基金指数的直接股票 PE / PB / PS / ROE 及派生分位显示「不适用」，旧观测留档供审计和备份，不进入评分、组合估值或 AI 当前结论；未知类别仍显示待核实。指数点位计价币独立于人民币账本金额，外币指数在点位列及导出中明确标注；只有同码官方基本资料与单张货币一致时才接受非人民币单张的无量纲估值，不执行汇率换算。AI 摘要包含适用性、分类依据和指数计价币，发送范围更新后需重新确认。
 
 错误码：用户输入 / 外部数据校验失败为 `422 validation-error`，资源不存在为 `404 not-found`，账本冲突为 `422`，schema 冲突为 `409`；程序内部故障仍为 `500 internal-error`。
 

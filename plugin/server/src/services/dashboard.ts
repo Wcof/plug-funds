@@ -11,7 +11,7 @@ import type { ServiceContext } from '../context.ts';
 import { allTransactions, listDeletedPositions } from '../repo/transactions.ts';
 import { listInstruments } from '../repo/instruments.ts';
 import { getEnabledGoal, listCashFlows } from '../repo/goal.ts';
-import { effectiveHistoryPoints, latestValuationMetrics } from '../repo/market.ts';
+import { effectiveHistoryPoints, analysisValuationMetrics } from '../repo/market.ts';
 import { listHoldings } from './holdings.ts';
 import { cashTotal } from '../repo/cash.ts';
 
@@ -228,7 +228,7 @@ function portfolioValuation(ctx: ServiceContext, rows: { instrumentId: string; m
     const mv = row.marketValue ? parseFixed(row.marketValue, SCALE_AMOUNT) : 0;
     if (mv <= 0) continue;
     totalMv += mv;
-    const metrics = latestValuationMetrics(ctx.handle, row.instrumentId);
+    const metrics = analysisValuationMetrics(ctx.handle, row.instrumentId);
     const pe = metricValue(metrics, 'pe');
     const pb = metricValue(metrics, 'pb');
     if (pe !== null && pb !== null) {

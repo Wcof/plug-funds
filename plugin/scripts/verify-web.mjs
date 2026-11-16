@@ -598,6 +598,46 @@ async function browserChecks() {
     expect('未覆盖的数据源显式说明而不是填 0',
       north.empty.includes('数据源未覆盖') && north.needs > 0, `${north.empty} · needs=${north.needs}`);
 
+    // 新建隔离 fixture 后重新挂载，验证不适用与外币指数的界面和实际 CSV 出口。
+    const bond = await rpcPost('save_instrument', { code: '000012', name: '国债指数', type: 'INDEX', market: 'SH' });
+    const bshare = await rpcPost('save_instrument', { code: '000003', name: 'Ｂ股指数', type: 'INDEX', market: 'SH' });
+    await rpcPost('save_manual_metric', { instrumentId: bond.id, metricKey: 'pe', value: '12', asOfDate: weekdays.at(-1) });
+    await rpcPost('save_manual_price', { instrumentId: bshare.id, value: '240', tradingDate: weekdays.at(-1) });
+    const profileDb = new DatabaseSync(path.join(stateDir, 'data', 'invest.db'));
+    try {
+      for (const [instrument, assetClass, currency] of [[bond, 'BOND', 'CNY'], [bshare, 'EQUITY', 'USD']]) {
+        profileDb.prepare('INSERT INTO app_settings (key,value_json,updated_at) VALUES (?,?,?)').run(`index_reference:${instrument.id}`, JSON.stringify({
+          code: instrument.code, provider: 'csindex', observedDate: '2026-11-17', publishDate: null,
+          publishStatus: { state: 'MISSING', reason: '浏览器测试 fixture' }, funds: null, unavailable: {}, evidence: [],
+          profile: { assetClass, currency, provider: 'csindex', classification: { field: 'indexType', value: assetClass === 'BOND' ? 'bond' : 'stock', reason: '浏览器 fixture 官方样本类别' }, currencyReason: '浏览器 fixture 同码计价币；不是账本金额' },
+        }), new Date().toISOString());
+      }
+    } finally { profileDb.close(); }
+    await evaluate(`document.querySelector('.nav-item').click()`);
+    await sleep(300);
+    await evaluate(`([...document.querySelectorAll('.nav-item')].find(e => e.innerText.includes('指数'))).click()`);
+    for (let i = 0; i < 30; i++) {
+      if (await evaluate(`!![...document.querySelectorAll('.idx-table tbody tr')].find(r => r.querySelector('td')?.innerText.trim() === '000012')`)) break;
+      await sleep(300);
+    }
+    const profileView = await evaluate(`(() => {
+      const row = code => [...document.querySelectorAll('.idx-table tbody tr')].find(r => r.querySelector('td')?.innerText.trim() === code);
+      return { bond: row('000012')?.innerText ?? '', pe: row('000012')?.querySelectorAll('td')[6]?.innerText ?? '',
+        usd: row('000003')?.querySelectorAll('td')[3]?.innerText ?? '' };
+    })()`);
+    expect('债券指数估值明确不适用，旧 PE 不显示为当前值', profileView.bond.includes('债券指数') && profileView.pe === '不适用', profileView.pe);
+    expect('外币指数明确计价币和点位单位', profileView.usd.includes('USD 计价 · 点'), profileView.usd);
+    await evaluate(`(() => {
+      const original = URL.createObjectURL;
+      URL.createObjectURL = blob => { if (blob.type.includes('csv')) blob.text().then(text => { window.__profileCsv = text; }); return original.call(URL, blob); };
+      window.__restoreProfileCsv = () => { URL.createObjectURL = original; };
+      [...document.querySelectorAll('button')].find(e => e.innerText.trim() === '导出').click();
+    })()`);
+    await sleep(300);
+    const exported = await evaluate(`window.__profileCsv ?? ''`);
+    await evaluate(`window.__restoreProfileCsv()`);
+    expect('实际 CSV 导出包含资产类别、USD 和不适用状态', exported.includes('指数计价币') && exported.includes('USD') && exported.includes('NOT_APPLICABLE') && exported.includes('不适用'));
+
     const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
     fs.writeFileSync(shotPath, Buffer.from(shot.result.data, 'base64'));
     console.log(`  SHOT  ${shotPath}`);

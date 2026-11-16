@@ -10,6 +10,8 @@ import { listAiRecords, getSetting, setSetting } from '../server/src/repo/settin
 import { saveMarketPoints, saveValuationMetric } from '../server/src/repo/market.ts';
 import { getAiStatus, AI_PROMPT_VERSION, AI_TIMEOUT_MS } from '../server/src/services/ai.ts';
 import type { ServiceContext } from '../server/src/context.ts';
+import { saveIndexReference } from '../server/src/repo/index-reference.ts';
+import { parseIndexProfile } from '../server/src/market/index-profile.ts';
 
 process.env.PLUG_FUNDS_DISABLE_KEYCHAIN = '1';
 
@@ -74,6 +76,27 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   handle.db.close();
   fs.rmSync(stateDir, { recursive: true, force: true });
+});
+
+test('AI 明确债券指数股票估值不适用，保留分类依据而不将旧原值作为当前分析', async () => {
+  const accountId = positionId.split(':')[0];
+  const ins = await rpc('save_instrument', { code: '000012', name: '国债指数', type: 'INDEX', market: 'SH' });
+  await rpc('record_transaction', { accountId, instrumentId: ins.id, type: 'OPENING', tradeDate: TODAY, quantity: '1', amount: '100' });
+  positionId = `${accountId}:${ins.id}`;
+  const profile = parseIndexProfile({ code: 200, data: { indexCode: '000012', indexType: 'bond', currencyEn: 'CNY', currencyCn: '人民币' } }, 'csindex', '000012');
+  saveIndexReference(handle, ins.id, { code: ins.code, provider: 'csindex', observedDate: TODAY, publishDate: '2003-01-02',
+    publishStatus: { state: 'VALID', reason: null }, funds: null, unavailable: {}, evidence: [], profile });
+  saveValuationMetric(handle, { instrumentId: ins.id, metricKey: 'pe', value: '12', provider: 'csindex', quality: 'FRESH', asOfDate: TODAY });
+  await configureReady(); await rpc('analyze_holding_with_ai', confirmed());
+  const request = requests.at(-1)!;
+  const scope = JSON.parse(request.body.messages[1].content);
+  assert.equal(scope.indexProfile.assetClass, 'BOND'); assert.equal(scope.currency, 'CNY');
+  for (const metric of scope.valuation.filter((m) => /^(pe|pb|ps|roe)(_|$)/.test(m.key))) {
+    assert.equal(metric.value, null); assert.equal(metric.status, 'NOT_APPLICABLE'); assert.match(metric.reason, /官方/);
+  }
+  assert.match(request.body.messages[0].content, /NOT_APPLICABLE/);
+  assert.match(scope.currencyRole, /指数点位计价币/);
+  assert.equal(handle.db.prepare('SELECT value FROM valuation_metrics WHERE instrument_id=? AND metric_key=?').get(ins.id, 'pe').value, '12');
 });
 
 test('未配置、未测试或缺少首次确认时不外发、不写分析记录', async () => {

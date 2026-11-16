@@ -13,7 +13,7 @@
  * 两融余额、互联互通、成分股新高新低家数缺数据时显式留空；换手率取已落库指标。
  */
 import type { ServiceContext } from '../context.ts';
-import { effectiveHistoryPoints, latestValuationMetrics } from '../repo/market.ts';
+import { effectiveHistoryPoints, analysisValuationMetrics } from '../repo/market.ts';
 import { listInstruments } from '../repo/instruments.ts';
 import { correlation } from '../../../core/src/risk.ts';
 import { xirr } from '../../../core/src/valuation.ts';
@@ -148,7 +148,7 @@ function ytdReturn(dates: string[], values: number[], today: string, eligibleBas
 }
 
 function numericMetrics(ctx: ServiceContext, id: string): Map<string, number> {
-  return new Map(latestValuationMetrics(ctx.handle, id, ctx.today)
+  return new Map(analysisValuationMetrics(ctx.handle, id, ctx.today)
     .filter((metric) => metric.value !== null && metric.value.trim() !== '' && Number.isFinite(Number(metric.value)))
     .map((metric) => [metric.metricKey, Number(metric.value)]));
 }

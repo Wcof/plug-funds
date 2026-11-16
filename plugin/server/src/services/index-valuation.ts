@@ -16,13 +16,14 @@ import { effectiveHistoryPoints, latestValuationMetrics, metricHistory, type Val
 import { listInstruments } from '../repo/instruments.ts';
 import { getIndexReference } from '../repo/index-reference.ts';
 import type { FundReference, ReferenceStatus } from '../market/index-reference.ts';
+import { indexMetricApplicability, type IndexProfile } from '../market/index-profile.ts';
 
 export interface IndexMetricStats {
   current: number | null;
   asOfDate: string | null;
   provider: string | null;
   percentile: number | null;
-  percentileStatus: { state: 'VALID' | 'MISSING' | 'STALE' | 'CONFLICT' | 'SUSPECT'; reason: string | null };
+  percentileStatus: ReferenceStatus;
   avg: number | null;
   min: number | null;
   p20: number | null;
@@ -38,6 +39,7 @@ export interface IndexValuationRow {
   name: string;
   tag: string;
   market: string;
+  profile: IndexProfile | null;
   publishDate: string | null;
   close: number | null;
   priceDate: string | null;
@@ -196,6 +198,8 @@ export function getIndexValuation(ctx: ServiceContext, options: IndexValuationOp
     const funds = reference?.funds ?? null;
     const seriesFor = (key: string) => metricHistory(ctx.handle, instrument.id, key, since, ctx.today);
     const statFor = (key: string): IndexMetricStats => {
+      const applicability = indexMetricApplicability(reference?.profile, key);
+      if (applicability) return { ...buildStats([], undefined, ctx.today), percentileStatus: applicability };
       const latest = latestMetrics.find((metric) => metric.metricKey === key);
       const asOfDate = latest?.asOfDate && validDate(latest.asOfDate) ? latest.asOfDate : ctx.today;
       const begin = sinceFor(years, asOfDate);
@@ -211,13 +215,16 @@ export function getIndexValuation(ctx: ServiceContext, options: IndexValuationOp
     const pb = statFor('pb');
     const ps = statFor('ps');
     const metricStatus = (key: 'pe' | 'pb', stats: IndexMetricStats): ReferenceStatus => {
+      const applicability = indexMetricApplicability(reference?.profile, key);
+      if (applicability) return applicability;
       if (stats.current === null) return { state: 'MISSING', reason: key === 'pb' ? reference?.unavailable.pb ?? '尚未取得 PB' : '尚未取得 PE' };
       if ((key === 'pe' && stats.current > 200) || (key === 'pb' && stats.current > 20)) return { state: 'SUSPECT', reason: `${key.toUpperCase()} 属极端值，保留原值并要求复核` };
       if (key === 'pe' && !['csindex', 'cnindex', 'manual'].includes(stats.provider ?? '')) return { state: 'SUSPECT', reason: '报价端 PE 口径尚未证明与官方滚动 PE 相同' };
       if (['STALE', 'SUSPECT', 'CONFLICT'].includes(stats.percentileStatus.state)) return stats.percentileStatus;
       return { state: 'VALID', reason: null };
     };
-    const roe = recentRoe(metricHistory(ctx.handle, instrument.id, 'roe', undefined, ctx.today), ctx.today);
+    const roe: [number | null, number | null, number | null] = indexMetricApplicability(reference?.profile, 'roe') ? [null, null, null]
+      : recentRoe(metricHistory(ctx.handle, instrument.id, 'roe', undefined, ctx.today), ctx.today);
     const dividendSeries = seriesFor('dividend_yield');
     const dividendPoint = dividendSeries.at(-1);
     const dividendYield = dividendPoint?.value ?? null;
@@ -241,6 +248,7 @@ export function getIndexValuation(ctx: ServiceContext, options: IndexValuationOp
       name: instrument.name,
       tag: instrument.tag,
       market: instrument.market,
+      profile: reference?.profile ?? null,
       publishDate: instrument.foundedDate ?? null,
       close,
       priceDate: latestPoint?.tradingDate ?? null,
@@ -251,13 +259,15 @@ export function getIndexValuation(ctx: ServiceContext, options: IndexValuationOp
       fundOff: funds?.off ?? null,
       fundReference: funds,
       fieldStates: {
+        assetClass: { state: reference?.profile && reference.profile.assetClass !== 'UNKNOWN' ? 'VALID' : 'MISSING', reason: reference?.profile?.classification.reason ?? '尚无官方资产类别资料' },
         publishDate: reference?.publishStatus ?? { state: instrument.foundedDate ? 'SUSPECT' : 'MISSING', reason: '尚无本轮官方发布日期校验证据' },
         fundOn: funds?.status ?? { state: 'MISSING', reason: reference?.unavailable.funds ?? '尚未取得官方关联产品清单' },
         fundOff: funds?.status ?? { state: 'MISSING', reason: reference?.unavailable.funds ?? '尚未取得官方关联产品清单' },
         pe: metricStatus('pe', pe),
         pb: metricStatus('pb', pb),
-        ps: { state: ps.current === null ? 'MISSING' : 'SUSPECT', reason: reference?.unavailable.ps ?? 'PS 来源与聚合定义尚未核实' },
-        roe: { state: roe.every((v) => v === null) ? 'MISSING' : 'SUSPECT', reason: reference?.unavailable.roe ?? '对应财报年度和指数 ROE 聚合定义尚未核实' },
+        ps: indexMetricApplicability(reference?.profile, 'ps') ?? { state: ps.current === null ? 'MISSING' : 'SUSPECT', reason: reference?.unavailable.ps ?? 'PS 来源与聚合定义尚未核实' },
+        roe: indexMetricApplicability(reference?.profile, 'roe') ?? { state: roe.every((v) => v === null) ? 'MISSING' : 'SUSPECT', reason: reference?.unavailable.roe ?? '对应财报年度和指数 ROE 聚合定义尚未核实' },
+        indexCurrency: { state: reference?.profile?.currency ? 'VALID' : 'MISSING', reason: reference?.profile?.currencyReason ?? '尚未取得官方计价币资料；点位不使用账本默认 CNY 代替' },
       },
       pe, pb, ps, roe,
       dividendYield,
@@ -274,6 +284,7 @@ export function getIndexValuation(ctx: ServiceContext, options: IndexValuationOp
     note: '数值全部取自本机 valuation_metrics / market_points（有效价格口径），缺数据为 null 并显示「—」。'
       + '最新点位保留日期与价格类型，盘中价不等同收盘价；今年收益以距上一年末不超过 14 天的有效收盘点为基准，缺基准不计算。'
       + 'PE 优先已有中证官方滚动序列，国证自编目录可提供国证官方 PE/PB；不同来源不拼接历史。'
+      + '官方资料确认的债券/基金指数不适用直接股票 PE/PB/PS/ROE 口径，旧观测留档但不产生当前估值；指数计价币与人民币账本金额分开。'
       + 'PB 与股息率仅展示当前接入数据源已提供的值，未取得不代表发行方不公开。'
       + 'ROE 按前 3 / 2 / 1 个日历年的末次观测列示，不等同对应财报年度 ROE。'
       + `当前分位仅使用最新截面同来源的历史，基础指标超过 ${MAX_CURRENT_AGE_DAYS} 个自然日、存在冲突或无效数据、样本 < ${MIN_PERCENTILE_SAMPLES} 或跨度 < ${MIN_PERCENTILE_SPAN_DAYS} 天时不产生数值；保留历史描述统计、来源和日期。`

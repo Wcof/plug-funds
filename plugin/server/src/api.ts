@@ -27,7 +27,7 @@ import {
 } from './repo/refresh-settings.ts';
 import { getTradingCalendarInfo } from './services/calendar.ts';
 import { getIndexAnalytics } from './services/index-analytics.ts';
-import { effectiveHistoryPoints, latestValuationMetrics, saveMarketPoints, saveValuationMetric } from './repo/market.ts';
+import { effectiveHistoryPoints, analysisValuationMetrics, saveMarketPoints, saveValuationMetric } from './repo/market.ts';
 import { listTemplates, saveTemplate, listVersions, restoreVersion } from './repo/strategies.ts';
 import { previewImport, commitImport } from './services/import.ts';
 import { xlsxBase64ToCsv } from './xlsx.ts';
@@ -151,7 +151,7 @@ async function compareInstruments(
   const rowFor = async (instrument: Instrument) => {
     const chart = await getInstrumentChartSeries(ctx, { instrumentId: instrument.id, tab: 'perf', period: range, compare: 'none' });
     const values = chart.series.map((p) => parseFixed(p.value, SCALE_QTY));
-    const metrics = latestValuationMetrics(ctx.handle, instrument.id);
+    const metrics = analysisValuationMetrics(ctx.handle, instrument.id);
     const metricValue = (key: string): string | null => metrics.find((m) => m.metricKey === key)?.value ?? null;
     return {
       name: instrument.name,

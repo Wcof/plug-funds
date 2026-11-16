@@ -12,7 +12,7 @@
  */
 import type { ServiceContext } from '../context.ts';
 import { getEnabledGoal, listCashFlows } from '../repo/goal.ts';
-import { latestValuationMetrics } from '../repo/market.ts';
+import { analysisValuationMetrics } from '../repo/market.ts';
 import { listInstruments } from '../repo/instruments.ts';
 import { SCALE_AMOUNT, parseFixed } from '../../../core/src/money.ts';
 import { concentration, type ConcentrationResult } from '../../../core/src/portfolio-risk.ts';
@@ -108,7 +108,7 @@ export function getDecisionReadiness(ctx: ServiceContext): DecisionReadiness {
 
   const indexInstruments = listInstruments(ctx.handle, { type: 'INDEX', active: true });
   const indexWithMetrics = indexInstruments.filter((inst) => {
-    const metrics = latestValuationMetrics(ctx.handle, inst.id);
+    const metrics = analysisValuationMetrics(ctx.handle, inst.id);
     return metrics.some((m) => m.metricKey === 'pe' && m.value !== null);
   }).length;
 

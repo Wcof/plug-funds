@@ -15,6 +15,7 @@ import { todayLocal } from '../server/src/ids.ts';
 import { shanghaiParts } from '../core/src/calendar.ts';
 import { parseCnindexSnapshot, CNINDEX_BASE } from '../server/src/market/cnindex.ts';
 import { csindexOfficialCode, CSINDEX_IDENTITIES } from '../server/src/market/index-identities.ts';
+import { parseIndexProfile, indexMetricApplicability } from '../server/src/market/index-profile.ts';
 
 const sha = (v) => createHash('sha256').update(v).digest('hex');
 const rootUrl = (kind, code) => ({
@@ -61,9 +62,19 @@ export async function planIndexReference({ handle, evidenceDir, today = todayLoc
     // 国证 intro 仅在真实完整目录中确认代码存在后选择；其他代码使用中证自带身份的基本资料。
     const isCn = cnCodes.has(ins.code);
     const provider = isCn ? 'cnindex' : 'csindex';
+    const oldReference = getIndexReference(handle, ins.id);
+    let profile = oldReference?.profile;
     let publishDate = null, funds = null, factsheet = null;
-    try { publishDate = parsePublishDate(read(isCn ? 'cnintro' : 'csinfo'), provider, ins.code, today); }
+    let basic = null;
+    try { basic = read(isCn ? 'cnintro' : 'csinfo'); publishDate = parsePublishDate(basic, provider, ins.code, today); }
     catch (error) { errors.push({ field: 'publishDate', reason: error.message }); }
+    try {
+      const kind = isCn ? 'cnintro' : 'csinfo';
+      const entry = manifest[`${ins.code}-${kind}`];
+      profile = { ...parseIndexProfile(basic, provider, ins.code),
+        evidence: { url: entry.url, sha256: entry.sha256, observedDate: capturedDate(kind) } };
+    }
+    catch (error) { errors.push({ field: 'profile', reason: error.message }); }
     try { funds = parseFundReference(read(isCn ? 'cnfunds' : 'csfunds'), provider, ins.code, capturedDate(isCn ? 'cnfunds' : 'csfunds')); }
     catch (error) { errors.push({ field: 'fundOn/fundOff', reason: error.message }); }
     if (!isCn) {
@@ -75,7 +86,11 @@ export async function planIndexReference({ handle, evidenceDir, today = todayLoc
       try {
         const document = read('factsheet');
         const text = await extractPdf(document.file);
-        factsheet = parseCsindexFactsheet(text, ins.code, today);
+        factsheet = parseCsindexFactsheet(text, ins.code, today, profile?.currency ?? 'CNY');
+        if (!profile) profile = { assetClass: 'UNKNOWN', provider,
+          classification: { field: 'factsheet', value: null, reason: '本次基本资料未取得，不能只凭单张标题判定资产类别' },
+          currency: factsheet.currency, currencyReason: '已核验同码官方单张货币栏；指数点位计价币，不是账本金额币种',
+          evidence: { url: rootUrl('factsheet', ins.code), sha256: sha(document.bytes), observedDate: capturedDate('factsheet') } };
         if (!publishDate && factsheet.publishDate) publishDate = factsheet.publishDate;
         else if (publishDate && factsheet.publishDate && publishDate !== factsheet.publishDate) {
           errors.push({ field: 'publishDate', reason: `官方基本资料 ${publishDate} 与单张 ${factsheet.publishDate} 不一致` });
@@ -83,12 +98,12 @@ export async function planIndexReference({ handle, evidenceDir, today = todayLoc
         }
       } catch (error) { errors.push({ field: 'factsheet', reason: error.message }); }
     }
-    const oldReference = getIndexReference(handle, ins.id);
     const recordedDates = evidence.map((e) => Object.values(manifest).find((entry) => entry.url === e.url && entry.sha256 === e.sha256)?.capturedAt)
       .filter((v) => typeof v === 'string').sort();
     const observedDate = recordedDates.length ? shanghaiParts(new Date(recordedDates.at(-1))).date : today;
     const reference = { code: ins.code, provider, observedDate, publishDate,
       ...(CSINDEX_IDENTITIES[ins.code] ? { identity: CSINDEX_IDENTITIES[ins.code] } : {}),
+      ...(profile ? { profile } : {}),
       publishStatus: publishDate ? { state: 'VALID', reason: null } : { state: 'MISSING', reason: errors.find((e) => e.field === 'publishDate')?.reason ?? '官方基本资料未列出发布日期' },
       funds: funds ?? oldReference?.funds ?? null,
       unavailable: {
@@ -100,7 +115,7 @@ export async function planIndexReference({ handle, evidenceDir, today = todayLoc
         ...(factsheet ? {} : { factsheet: errors.find((e) => e.field === 'factsheet')?.reason ?? '国证目录仅有本期估值，没有同源 PB 历史' }),
       }, evidence };
     const desired = [];
-    if (factsheet) {
+    if (factsheet && !indexMetricApplicability(profile, 'pb')) {
       const primaryPb = officialIndexMetricProvider(handle, ins.id, 'pb', today);
       const base = { asOfDate: factsheet.date, provider: 'csindex-factsheet', quality: factsheet.quality };
       if (factsheet.pb !== null && (!primaryPb || primaryPb === 'csindex-factsheet')) desired.push({ ...base, metricKey: 'pb', value: String(factsheet.pb) });
@@ -118,6 +133,7 @@ export async function planIndexReference({ handle, evidenceDir, today = todayLoc
       return !old || old.value !== metric.value || old.provider !== metric.provider || old.quality !== metric.quality ? [{ before: old, after: metric }] : [];
     });
     report.rows.push({ instrumentId: ins.id, code: ins.code, name: ins.name, previousPublishDate: ins.foundedDate,
+      previousProfile: oldReference?.profile ?? null,
       nameChanged: Boolean(CSINDEX_IDENTITIES[ins.code] && CSINDEX_IDENTITIES[ins.code].name !== ins.name),
       canonicalName: CSINDEX_IDENTITIES[ins.code]?.name ?? ins.name,
       publishChanged: publishDate !== null && publishDate !== ins.foundedDate,
@@ -137,10 +153,11 @@ export function applyIndexReference(handle, report) {
       if (row.referenceChanged) saveIndexReference(handle, row.instrumentId, row.reference);
       if (row.desired.some((m) => m.metricKey === 'pb')) archiveIndexQuoteMetric(handle, row.instrumentId, 'pb');
       for (const metric of row.desired) saveValuationMetric(handle, { instrumentId: row.instrumentId, ...metric });
-      if (row.nameChanged || row.publishChanged || row.changes.some((c) => c.before)) {
+      if (row.nameChanged || row.publishChanged || row.referenceChanged || row.changes.some((c) => c.before)) {
         const note = JSON.stringify({ kind: 'index-reference-update', code: row.code, instrumentId: row.instrumentId,
           previousPublishDate: row.previousPublishDate, publishDate: row.reference.publishDate, changes: row.changes,
           previousName: row.name, name: row.canonicalName ?? row.name, identity: row.reference.identity ?? null,
+          previousProfile: row.previousProfile ?? null, profile: row.reference.profile ?? null,
           evidence: row.reference.evidence });
         const now = new Date().toISOString();
         handle.db.prepare('INSERT OR IGNORE INTO data_source_runs (id,started_at,finished_at,instruments,ok,failed,note) VALUES (?,?,?,?,?,?,?)')

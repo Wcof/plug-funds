@@ -26,7 +26,7 @@ import './index-page.css';
 interface MetricStats {
   current: number | null; percentile: number | null; avg: number | null;
   asOfDate: string | null; provider: string | null;
-  percentileStatus: { state: 'VALID' | 'MISSING' | 'STALE' | 'CONFLICT' | 'SUSPECT'; reason: string | null };
+  percentileStatus: { state: 'VALID' | 'MISSING' | 'STALE' | 'CONFLICT' | 'SUSPECT' | 'NOT_APPLICABLE'; reason: string | null };
   min: number | null; p20: number | null; p50: number | null; p80: number | null;
   max: number | null; samples: number;
 }
@@ -37,6 +37,7 @@ interface IndexRow {
   fundOn: number | null; fundOff: number | null;
   fundReference?: { sourceDate: string | null; observedDate: string; provider: string; note: string; status: { state: string; reason: string | null } } | null;
   fieldStates?: Record<string, { state: string; reason: string | null }>;
+  profile?: { assetClass: string; currency: string | null; currencyReason: string; classification: { reason: string } } | null;
   pe: MetricStats; pb: MetricStats; ps: MetricStats;
   roe: [number | null, number | null, number | null];
   dividendYield: number | null; dividendAsOfDate: string | null; dividendProvider: string | null;
@@ -351,20 +352,21 @@ export function IndexPage(props: {
 
   const exportRows = (): void => {
     const header = [
-      '代码', '指数名称', '发布时间', '最新点位', '价格日期', '价格类型', '价格质量', '今年收益率(%)', '场内|场外', '基金统计日', '基金观察日', '基金来源', '基金状态', '基金口径',
+      '代码', '指数名称', '样本资产类别', '指数计价币', '计价币说明', '发布时间', '最新点位', '价格日期', '价格类型', '价格质量', '今年收益率(%)', '场内|场外', '基金统计日', '基金观察日', '基金来源', '基金状态', '基金口径',
       ...visibleGroups.flatMap((g) => [...STAT_LABELS.map((l) => `${g.title}-${l}`), `${g.title}-日期`, `${g.title}-来源`, `${g.title}-分位状态`, `${g.title}-分位说明`]),
       ...(showRoe ? ROE_LABELS.map((l) => `ROE-${l}`) : []), '股息率(%)', '股息率日期', '股息率来源', '市值', '字段核验状态',
     ];
     const lines = [header, ...displayRows.map((row) => [
-      row.code, row.name, row.publishDate ?? '', num(row.close), row.priceDate ?? '', row.priceType ?? '', row.priceQuality ?? '', num(row.ytdReturn),
+      row.code, row.name, row.profile?.assetClass ?? '', row.profile?.currency ?? '', row.profile?.currencyReason ?? '', row.publishDate ?? '', num(row.close), row.priceDate ?? '', row.priceType ?? '', row.priceQuality ?? '', num(row.ytdReturn),
       row.fundOn === null || row.fundOff === null ? '' : `${row.fundOn}|${row.fundOff}`,
       row.fundReference?.sourceDate ?? '', row.fundReference?.observedDate ?? '', row.fundReference?.provider ?? '',
       row.fundReference?.status.state ?? 'MISSING', row.fundReference ? `${row.fundReference.note} ${row.fundReference.status.reason ?? ''}` : row.fieldStates?.fundOn?.reason ?? '',
       ...visibleGroups.flatMap((g) => [...STAT_KEYS.map((k) => {
+        if (row.fieldStates?.[g.key]?.state === 'NOT_APPLICABLE') return '不适用';
         const v = (row[g.key] as MetricStats)[k];
         return k === 'percentile' ? pct(v) : num(v);
       }), row[g.key].asOfDate ?? '', row[g.key].provider ?? '', row[g.key].percentileStatus.state, row[g.key].percentileStatus.reason ?? '']),
-      ...(showRoe ? row.roe.map((v) => pct(v)) : []), pct(row.dividendYield), row.dividendAsOfDate ?? '', row.dividendProvider ?? '', num(row.marketValue), JSON.stringify(row.fieldStates ?? {}),
+      ...(showRoe ? row.roe.map((v) => row.fieldStates?.roe?.state === 'NOT_APPLICABLE' ? '不适用' : pct(v)) : []), pct(row.dividendYield), row.dividendAsOfDate ?? '', row.dividendProvider ?? '', num(row.marketValue), JSON.stringify(row.fieldStates ?? {}),
     ])];
     const yearLabel = YEARS.find((y) => y.value === years)?.label ?? `${years}年`;
     downloadCsv(`指数列表-${stat}-${yearLabel}.csv`, lines);
@@ -573,10 +575,13 @@ export function IndexPage(props: {
                     <td className="idx-fixed idx-f1 idx-code">{row.code}</td>
                     <td className="idx-fixed idx-f2 idx-name">
                       <button className="link" onClick={(e) => openName(row, e)}>{row.name}</button>
+                      {row.profile && ['BOND', 'FUND'].includes(row.profile.assetClass) ? <div className="date-cell" title={row.profile.classification.reason}>{row.profile.assetClass === 'BOND' ? '债券指数' : '基金指数'}</div> : null}
+                      {row.profile?.assetClass === 'UNKNOWN' ? <div className="date-cell" title={row.profile.classification.reason}>类别待核实</div> : null}
                     </td>
                     <td className="idx-na" title={row.fieldStates?.publishDate?.reason ?? ''}>{row.publishDate ?? '—'}</td>
                     <td className="num" title={row.close === null ? '暂无有效点位' : priceDescription(row)}>{num(row.close)}
                       {row.close !== null ? <div className="date-cell">{priceDescription(row)}</div> : null}
+                      {row.profile?.currency && row.profile.currency !== 'CNY' ? <div className="date-cell" title={row.profile.currencyReason}>{row.profile.currency} 计价 · 点</div> : null}
                     </td>
                     <td className={`num ${toneClass(row.ytdReturn, 'change')}`}>{pct(row.ytdReturn)}</td>
                     <td className="idx-na" title={row.fundReference ? `${row.fundReference.provider}；统计日：${row.fundReference.sourceDate ?? '未提供'}；观察日：${row.fundReference.observedDate}；${row.fundReference.note} ${row.fundReference.status.reason ?? ''}` : row.fieldStates?.fundOn?.reason ?? '尚未取得关联基金清单'}>
@@ -588,12 +593,12 @@ export function IndexPage(props: {
                       return (
                         <td key={`${g.key}.${k}`} className={`num ${k === 'percentile' ? toneClass(v, 'temp') : ''}`}
                           title={`估值日期：${row[g.key].asOfDate ?? '缺失'}；来源：${row[g.key].provider ?? '缺失'}；区间样本：${row[g.key].samples}；分位状态：${row[g.key].percentileStatus.state}${row[g.key].percentileStatus.reason ? `；${row[g.key].percentileStatus.reason}` : ''}；${row.fieldStates?.[g.key]?.reason ?? ''}`}>
-                          {k === 'percentile' ? pct(v) : num(v)}
+                          {row.fieldStates?.[g.key]?.state === 'NOT_APPLICABLE' ? (k === 'current' ? '不适用' : '—') : k === 'percentile' ? pct(v) : num(v)}
                           {k === 'current' && v !== null && row[g.key].provider === 'csindex-factsheet' ? <div className="date-cell">单张 {row[g.key].asOfDate}</div> : null}
                         </td>
                       );
                     }))}
-                    {showRoe ? row.roe.map((v, i) => <td key={`roe${i}`} className="num" title={row.fieldStates?.roe?.reason ?? ''}>{pct(v)}</td>) : null}
+                    {showRoe ? row.roe.map((v, i) => <td key={`roe${i}`} className="num" title={row.fieldStates?.roe?.reason ?? ''}>{row.fieldStates?.roe?.state === 'NOT_APPLICABLE' ? '不适用' : pct(v)}</td>) : null}
                     <td className="num" title={`股息率日期：${row.dividendAsOfDate ?? '缺失'}；来源：${row.dividendProvider === 'csindex-xls-calc-share' ? '中证 XLS（计算用股本）' : row.dividendProvider === 'csindex' ? '中证 JSON 快照' : row.dividendProvider ?? '缺失'}`}>{pct(row.dividendYield)}</td>
                     <td className="num">{num(row.marketValue)}</td>
                     <td>

@@ -14,9 +14,11 @@ import type { Instrument } from '../../../core/src/types.ts';
 import type { ServiceContext } from '../context.ts';
 import { listTemplates } from '../repo/strategies.ts';
 import { getInstrument, listInstruments } from '../repo/instruments.ts';
-import { effectiveHistoryPoints, latestValuationMetrics } from '../repo/market.ts';
+import { effectiveHistoryPoints, analysisValuationMetrics } from '../repo/market.ts';
 import { listHoldings } from './holdings.ts';
 import { seriesStats, type ChartPoint } from './charts.ts';
+import { getIndexReference } from '../repo/index-reference.ts';
+import { indexMetricApplicability } from '../market/index-profile.ts';
 
 export type ValuationScope = 'holdings' | 'all';
 
@@ -155,7 +157,8 @@ export async function getHoldingsValuation(
   const rows: ValuationRow[] = [];
   for (const { instrument, held } of targets) {
     if (filter.type && instrument.type !== filter.type) continue;
-    const metrics = latestValuationMetrics(ctx.handle, instrument.id, ctx.today);
+    const metrics = analysisValuationMetrics(ctx.handle, instrument.id, ctx.today);
+    const applicability = indexMetricApplicability(getIndexReference(ctx.handle, instrument.id)?.profile, 'pe');
     const lite: MetricLite[] = metrics.map((m) => ({ key: m.metricKey, value: m.value, asOfDate: m.asOfDate, provider: m.provider, quality: m.quality }));
     // 派生分位只在基础指标同日且仍新鲜时参与评分；旧值可追溯，但不能当当前判断。
     const usablePercentile = (key: string): number | null => {
@@ -207,7 +210,7 @@ export async function getHoldingsValuation(
       sharpe: stats.sharpe,
       volatilityPct: stats.vol === null ? null : stats.vol * 100,
       maxDrawdownPct: stats.mdd === null ? null : stats.mdd * 100,
-      caliber: caliberFor(instrument, lite, pe) + (lite.some((metric) => metric.key.endsWith('_percentile') && (metric.key === 'pe_percentile' ? pePct : pbPct) === null)
+      caliber: (applicability ? applicability.reason : caliberFor(instrument, lite, pe)) + (lite.some((metric) => metric.key.endsWith('_percentile') && (metric.key === 'pe_percentile' ? pePct : pbPct) === null)
         ? ' · 分位过期、不同日或质量存疑，不参与评分' : ''),
       strategies,
     });

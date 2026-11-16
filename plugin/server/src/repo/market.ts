@@ -3,6 +3,8 @@ import type { DbHandle } from '../db.ts';
 import { newId, nowIso } from '../ids.ts';
 import { shanghaiParts } from '../../../core/src/calendar.ts';
 import { createHash } from 'node:crypto';
+import { getIndexReference } from './index-reference.ts';
+import { indexMetricApplicability } from '../market/index-profile.ts';
 
 interface MarketRow {
   id: string;
@@ -337,4 +339,10 @@ export function latestValuationMetrics(handle: DbHandle, instrumentId: string, t
     provider: row.provider,
     quality: row.quality as DataQuality,
   }));
+}
+
+/** 分析入口排除已证实不适用的股票估值；原始读取与备份仍保留全部观测。 */
+export function analysisValuationMetrics(handle: DbHandle, instrumentId: string, today = shanghaiParts(new Date()).date): ValuationMetricRow[] {
+  const profile = getIndexReference(handle, instrumentId)?.profile;
+  return latestValuationMetrics(handle, instrumentId, today).filter((row) => !indexMetricApplicability(profile, row.metricKey));
 }

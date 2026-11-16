@@ -1,0 +1,346 @@
+[
+  {
+    "code": "000003",
+    "source": "csindex",
+    "evidence": {
+      "url": "https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/000003",
+      "sha256": "524563914cdbc65b2057abf8a4a1a3e20cdd367c5e1c8e0455da1e76f9377a5a"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "indexCode": "000003",
+        "indexType": "stock",
+        "currencyEn": "USD",
+        "currencyCn": "美元",
+        "indexCnDesc": "上证B股指数由上海证券交易所上市的符合条件的B股组成样本股，反映上海市场B股的股价整体表现，以美元计价。"
+      }
+    }
+  },
+  {
+    "code": "000011",
+    "source": "csindex",
+    "evidence": {
+      "url": "https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/000011",
+      "sha256": "6fa891527b9b0271fb0a3030a938610cddaf11a89cdb8ed64ba664d50de17c0e"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "indexCode": "000011",
+        "indexType": "other",
+        "currencyEn": "CNY",
+        "currencyCn": "人民币",
+        "indexCnDesc": "基金指数的成份股是所有在上海证券交易所上市的证券投资基金，反映了基金的价格整体变动状况。"
+      }
+    }
+  },
+  {
+    "code": "000012",
+    "source": "csindex",
+    "evidence": {
+      "url": "https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/000012",
+      "sha256": "4390b7dc8015f4ed85dfeeafde53b7a7b4565ce95064deb5028216343f0fe39b"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "indexCode": "000012",
+        "indexType": "bond",
+        "currencyEn": "CNY",
+        "currencyCn": "人民币",
+        "indexCnDesc": "该指数样本券由在上海证券交易所上市的固定利率国债构成，指数采用国债发行量加权计算。"
+      }
+    }
+  },
+  {
+    "code": "000013",
+    "source": "csindex",
+    "evidence": {
+      "url": "https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/000013",
+      "sha256": "aed42eebbf26880ad364264e73928c606feee459c7ef6ca88d73eb256f3d95dd"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "indexCode": "000013",
+        "indexType": "bond",
+        "currencyEn": "CNY",
+        "currencyCn": "人民币",
+        "indexCnDesc": "指数样本券由上海证券交易所和深圳证券交易所上市、剩余期限 1年以上的投资级企业债构成，指数采用发行量加权计算。"
+      }
+    }
+  },
+  {
+    "code": "000022",
+    "source": "csindex",
+    "evidence": {
+      "url": "https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/000022",
+      "sha256": "695b4abe8027cc9e7dc6ef3981241d9fb7254bc2535663945f13f1eab5a5362f"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "indexCode": "000022",
+        "indexType": "bond",
+        "currencyEn": "CNY",
+        "currencyCn": "人民币",
+        "indexCnDesc": "上证公司债指数是首只综合反映上海证券交易所市场公司债券整体价格变动趋势的指数。该指数的样本是由在沪市交易的公司债券组成，为债券投资者提供新的业绩评价基准和分析工具。"
+      }
+    }
+  },
+  {
+    "code": "000061",
+    "source": "csindex",
+    "evidence": {
+      "url": "https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/000061",
+      "sha256": "3ac213f782c8fc6121b2b19391e7357b02e1972fe4819fe60e483c5c25c8b33a"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "indexCode": "000061",
+        "indexType": "bond",
+        "currencyEn": "CNY",
+        "currencyCn": "人民币",
+        "indexCnDesc": "上证企债30指数是国内首只实时成份债券指数，该指数从上海证券交易所市场挑选30只评级高、规模大、流动性强的企业债券组成样本。"
+      }
+    }
+  },
+  {
+    "code": "000101",
+    "source": "csindex",
+    "evidence": {
+      "url": "https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/000101",
+      "sha256": "416ce203844bf76e60f6b2b92bdacb233b5b316a1bec88a8a70140af7758bb56"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "indexCode": "000101",
+        "indexType": "bond",
+        "currencyEn": "CNY",
+        "currencyCn": "人民币",
+        "indexCnDesc": "上证5年期信用债指数的样本由上海证券交易所市场剩余期限介于4至7年之间、主体信用等级AA级及以上、发行量8亿元及以上的信用债券组成。"
+      }
+    }
+  },
+  {
+    "code": "000116",
+    "source": "csindex",
+    "evidence": {
+      "url": "https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/000116",
+      "sha256": "9afa415d71ac00e94528170d909d41e985662f01527daa23b68d857e2215577f"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "indexCode": "000116",
+        "indexType": "bond",
+        "currencyEn": "CNY",
+        "currencyCn": "人民币",
+        "indexCnDesc": "上证信用债100指数的样本由上海证券交易所市场剩余期限1年以上、信用等级AA及以上、发行量8亿元及以上的信用债券组成。"
+      }
+    }
+  },
+  {
+    "code": "000923",
+    "source": "csindex",
+    "evidence": {
+      "url": "https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/000923",
+      "sha256": "70d38e101ea9fded5f64b59719ed4a0de48e6ed577de8ffb29fe34f3a12fab04"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "indexCode": "000923",
+        "indexType": "bond",
+        "currencyEn": "CNY",
+        "currencyCn": "人民币",
+        "indexCnDesc": "中证公司债指数是首只综合反映交易所市场公司债券整体价格变动趋势的指数。该指数的样本是由沪深交易所上市交易的公司债券组成，中证指数公司每日实时计算并向市场发布，为债券投资者提供新的业绩评价基准和分析工具。该指数基日为2007年12月31日，基点为100点，指数代码为000923（上海）/399923（深圳），指数简称为公司债指。"
+      }
+    }
+  },
+  {
+    "code": "399001",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399001",
+      "sha256": "0e01fe7216f362967f97dd87ed810af1a9614676522fedc7ae7c55d1fbcf3537"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "深市A股"
+      }
+    }
+  },
+  {
+    "code": "399103",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399103",
+      "sha256": "9475ae1a8a4efd1c6164b527c06eeba9aaa9a0d0e05481ad204e989651e9b2bf"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "深市上市基金"
+      }
+    }
+  },
+  {
+    "code": "399289",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399289",
+      "sha256": "154a0afe698c760f8405f3fb03a0f5a2d65ee3e2965a2615675277323464554f"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "深市债券"
+      }
+    }
+  },
+  {
+    "code": "399290",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399290",
+      "sha256": "c43cc852c7584082d7a74a42d64c5a9030a5220a02155e7e48870fc537b3025a"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "深市债券"
+      }
+    }
+  },
+  {
+    "code": "399298",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399298",
+      "sha256": "740bc55c6fbf34451c66d37090818fc6aeb31d732635d2563f929a68ef0b4505"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "深市债券"
+      }
+    }
+  },
+  {
+    "code": "399299",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399299",
+      "sha256": "1ac566aaf84c53c27b5e54d184246cf4b7ef089a029ae7d283385da21e4a7f59"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "深市债券"
+      }
+    }
+  },
+  {
+    "code": "399301",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399301",
+      "sha256": "e306975ec2e6750a2f54ada70f4e74f59238edd2ffee4409c333b85d334ec291"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "深市债券"
+      }
+    }
+  },
+  {
+    "code": "399302",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399302",
+      "sha256": "1897c22ae8c144c19b118c5c7b577b3720e25df5c8aec906f43c50a95989fbd9"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "深市债券"
+      }
+    }
+  },
+  {
+    "code": "399306",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399306",
+      "sha256": "2b6eca9e722f19be1abee7626f0c661e7af23b808a1550c60d5d574cc2478704"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "深市上市ETF"
+      }
+    }
+  },
+  {
+    "code": "399307",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399307",
+      "sha256": "ba6b00ccb9bf032e7bb052f602d62988928a3fcb9c6159777a5e27281d4e414b"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "深市可转债"
+      }
+    }
+  },
+  {
+    "code": "399379",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399379",
+      "sha256": "127b90ba58fed98ab78ab4523358ab512e198850152d3b70b9f8598382868539"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "沪深上市基金"
+      }
+    }
+  },
+  {
+    "code": "399380",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399380",
+      "sha256": "81ac4c6747c6331fd52717df18971ee62d47ec2738e8db03fd7bf41395d06dfd"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "沪深上市ETF"
+      }
+    }
+  },
+  {
+    "code": "399413",
+    "source": "cnindex",
+    "evidence": {
+      "url": "https://www.cnindex.com.cn/index-intro?indexcode=399413",
+      "sha256": "c189ac24064648e8f2a185241b9cf9999ab18e1f40c730aa6de23d0814d49cff"
+    },
+    "payload": {
+      "code": 200,
+      "data": {
+        "xyfw": "境内证券交易所可转债"
+      }
+    }
+  }
+]
