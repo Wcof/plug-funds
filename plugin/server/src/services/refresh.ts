@@ -17,11 +17,18 @@ import { allTransactions } from '../repo/transactions.ts';
 import { listInstruments } from '../repo/instruments.ts';
 import { metricHistory, saveMarketPoints, saveValuationMetric } from '../repo/market.ts';
 import { detectConflict, type QuoteCandidate } from '../market/conflict.ts';
+import { fetchCsindexIndicator, snapshotToMetrics } from '../market/csindex.ts';
 import { listHoldings } from './holdings.ts';
 import { newId, nowIso, todayLocal } from '../ids.ts';
 
 /** 经验分位的最小样本数；不足则不产生分位（UI 显示「样本不足」）。 */
 const MIN_PERCENTILE_SAMPLES = 20;
+/**
+ * 分位的最小时间跨度（天）。
+ * 只有样本数够但跨度太短时（例如刚从中证官网导入 20 个交易日），算出来的是「近 1 月分位」，
+ * 用它去套「近 3 年分位」的阈值会产生看似确定、实则无意义的结论 —— 宁可不写。
+ */
+const MIN_PERCENTILE_SPAN_DAYS = 180;
 
 export interface RefreshConflict {
   primary: string;
@@ -87,6 +94,33 @@ export async function refreshMarketData(
     const currentMetrics = new Map<string, { value: string; asOfDate: string }>();
     let historyDone = false;
     let estimateTried = false;
+
+    // 指数：优先取中证指数官网的官方估值（PE1/PE2 + 股息率1/2，20 个交易日截面）。
+    // 注意官方 PE 落的是 `pe_official`，不覆盖报价端的 `pe`（口径差 2%–19%，混用会让分位跳变）；
+    // 股息率只有官方源提供，因此 `dividend_yield` 由这里写入并占位，后续源不再重复写。
+    if (instrument.type === 'INDEX') {
+      try {
+        const snapshots = await fetchCsindexIndicator(instrument);
+        if (snapshots.length > 0) {
+          const { latest, history } = snapshotToMetrics(instrument.id, snapshots);
+          for (const row of history) {
+            saveValuationMetric(ctx.handle, {
+              instrumentId: instrument.id, metricKey: row.metricKey, value: row.value,
+              asOfDate: row.asOfDate, provider: 'csindex', quality: row.quality,
+            });
+          }
+          for (const metric of latest) {
+            writtenMetricKeys.add(metric.metricKey);
+            item.metrics += 1;
+            if (metric.value !== null) currentMetrics.set(metric.metricKey, { value: metric.value, asOfDate: metric.asOfDate });
+          }
+          item.provider = item.provider ?? 'csindex';
+          item.providers = [...new Set([...item.providers, 'csindex'])];
+        }
+      } catch (error) {
+        notes.push(`中证官方估值失败：${messageOf(error)}`);
+      }
+    }
 
     for (const provider of providers) {
       try {
@@ -180,9 +214,12 @@ export async function refreshMarketData(
     for (const key of ['pe', 'pb'] as const) {
       const current = currentMetrics.get(key);
       if (!current) continue;
-      const history = metricHistory(ctx.handle, instrument.id, key, sinceDate).map((h) => h.value);
-      if (history.length < MIN_PERCENTILE_SAMPLES) continue;
-      const pct = percentile(history, Number(current.value));
+      const series = metricHistory(ctx.handle, instrument.id, key, sinceDate);
+      if (series.length < MIN_PERCENTILE_SAMPLES) continue;
+      // 跨度守卫：样本够但只看了一个月 → 那是「近 1 月分位」，不能当近 3 年分位用
+      const spanDays = (Date.parse(`${current.asOfDate}T00:00:00Z`) - Date.parse(`${series[0].asOfDate}T00:00:00Z`)) / 86_400_000;
+      if (!Number.isFinite(spanDays) || spanDays < MIN_PERCENTILE_SPAN_DAYS) continue;
+      const pct = percentile(series.map((h) => h.value), Number(current.value));
       if (pct === null) continue;
       saveValuationMetric(ctx.handle, {
         instrumentId: instrument.id,

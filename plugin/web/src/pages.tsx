@@ -916,7 +916,7 @@ export function ValuationPage(props: { reloadKey: number; instrumentId: string |
               {gaps.map((gap, i) => (
                 <React.Fragment key={gap.label}>{i > 0 ? ' · ' : ''}<b>{gap.label} ×{gap.count}</b></React.Fragment>
               ))}
-              。分位类指标要按日累积 ≥20 个历史估值截面才会计算，持续刷新即可补齐；也可在标的详情页手工补录（标注 MANUAL）。
+              。分位类指标要同时满足「≥20 个历史截面」和「跨度 ≥180 天」才会计算，插件按日累积即可补齐；也可在标的详情页手工补录（标注 MANUAL）。
             </div>
           ) : null}
           <div className="card" style={{ paddingTop: 6 }}>

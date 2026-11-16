@@ -46,7 +46,7 @@ import { getPortfolioRisk, getCorrelationMatrix, saveRiskFreeRate } from './serv
 import { listCashAccounts, saveCashAccount, deleteCashAccount } from './repo/cash.ts';
 import { getRebalancePlan, saveRebalanceTargets, listRebalanceTargets } from './services/rebalance.ts';
 
-const APP_VERSION = '0.1.2';
+const APP_VERSION = '0.1.3';
 
 /* ---------------- DASH-12 金额掩码 ---------------- */
 

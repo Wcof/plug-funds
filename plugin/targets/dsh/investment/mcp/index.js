@@ -3683,12 +3683,20 @@ function parseStockMetrics(payload, instrumentId, today) {
   const data = payload.data;
   if (!data) return [];
   const out = [];
-  if (typeof data.f115 === "number" && data.f115 > 0) {
-    out.push({ metricKey: "pe", value: String(data.f115), asOfDate: today, quality: "FRESH" });
-  }
-  if (typeof data.f167 === "number" && data.f167 > 0) {
-    out.push({ metricKey: "pb", value: String(data.f167), asOfDate: today, quality: "FRESH" });
-  }
+  const take = (metricKey, raw, opts = {}) => {
+    if (raw === void 0 || raw === null || raw === "" || raw === "-") return;
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return;
+    if (opts.positive !== false && value <= 0) return;
+    out.push({ metricKey, value: String(Math.round(value * 100) / 100), asOfDate: today, quality: "FRESH" });
+  };
+  take("pe", data.f164);
+  take("pe_dynamic", data.f162);
+  take("pe_static", data.f163);
+  take("pb", data.f167);
+  take("roe", data.f173);
+  take("gross_margin_pct", data.f187);
+  take("net_margin_pct", data.f188);
   if (typeof data.f20 === "number" && data.f20 > 0) {
     out.push({ metricKey: "scale_info", value: `\u603B\u5E02\u503C ${(data.f20 / 1e8).toFixed(0)} \u4EBF`, asOfDate: today, quality: "FRESH" });
   }
@@ -3776,7 +3784,7 @@ function createEastmoneyProvider() {
       const secid = secidOf(target);
       if (!secid) return [];
       const payload = await fetchJson(
-        `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&invt=2&fltt=2&fields=f43,f59,f115,f167,f20`
+        `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&invt=2&fltt=2&fields=f43,f59,f115,f162,f163,f164,f167,f173,f184,f186,f187,f188,f20`
       );
       const metrics = parseStockMetrics(payload, instrument.id, today);
       return instrument.type === "STOCK" ? metrics : metrics.filter((m2) => m2.metricKey !== "scale_info");
@@ -3978,7 +3986,12 @@ function caliberFor(instrument, metrics, pe) {
   if (instrument.type === "STOCK") {
     caliber = `\u4E2A\u80A1 PE-TTM / PB \xB7 ${asOf ?? "\u6682\u65E0\u62AB\u9732"}`;
   } else if (instrument.type === "INDEX") {
-    caliber = asOf ? `\u6307\u6570\u4F30\u503C\u622A\u9762 \xB7 ${asOf}` : "\u6307\u6570\u4F30\u503C\u622A\u9762 \xB7 \u6682\u65E0\u6570\u636E";
+    const official = metrics.find((m2) => m2.key === "pe_official");
+    const dividend = metrics.find((m2) => m2.key === "dividend_yield");
+    const parts = [`\u6307\u6570 PE ${pe === null ? "\u672A\u83B7\u53D6" : "\u62A5\u4EF7\u7AEF\u53E3\u5F84"}`];
+    if (official) parts.push(`\u4E2D\u8BC1\u5B98\u65B9 PE2 ${official.value}\uFF08${official.asOfDate}\uFF09`);
+    if (dividend) parts.push(`\u80A1\u606F\u7387 ${dividend.value}%`);
+    caliber = parts.join(" \xB7 ");
   } else if (isFund && !hasIndexLink && pe === null) {
     caliber = "\u4E3B\u52A8\u57FA\u91D1 \xB7 \u6301\u4ED3\u62AB\u9732\u6EDE\u540E\uFF08\u5B63\u62A5\uFF09\uFF0C\u4E0D\u63D0\u4F9B\u5B9E\u65F6\u7A7F\u900F\u4F30\u503C";
   } else if ((isFund || isEtf) && hasIndexLink) {
@@ -4286,8 +4299,260 @@ function detectConflict(candidates, threshold = DEFAULT_CONFLICT_THRESHOLD) {
   return worst;
 }
 
+// plugin/server/src/market/csindex.ts
+var UA2 = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
+var TIMEOUT_MS2 = 15e3;
+var MIN_INTERVAL_MS2 = 250;
+var lastRequestAt2 = 0;
+var blockedUntil = 0;
+var BLOCK_BACKOFF_MS = 10 * 60 * 1e3;
+async function paced2() {
+  const wait = lastRequestAt2 + MIN_INTERVAL_MS2 - Date.now();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  lastRequestAt2 = Date.now();
+}
+function csindexIndicatorUrl(code) {
+  return `https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/indicator/${code}indicator.xls`;
+}
+function readOleWorkbook(buffer) {
+  if (buffer.length < 512 || buffer.readUInt32LE(0) !== 3759263696) throw new Error("\u4E0D\u662F OLE2 \u590D\u5408\u6587\u6863");
+  const sectorShift = buffer.readUInt16LE(30);
+  if (sectorShift !== 9 && sectorShift !== 12) throw new Error("OLE2 \u6247\u533A\u5927\u5C0F\u5F02\u5E38");
+  const sectorSize = 1 << sectorShift;
+  const maxSector = Math.ceil(buffer.length / sectorSize);
+  const dirStart = buffer.readUInt32LE(48);
+  const difStart = buffer.readUInt32LE(68);
+  const fatSectorIds = [];
+  for (let i = 0; i < 109; i += 1) {
+    const sid = buffer.readUInt32LE(76 + i * 4);
+    if (sid === 4294967295) break;
+    fatSectorIds.push(sid);
+  }
+  for (let sid = difStart, guard = 0; Number.isInteger(sid) && sid >= 0 && sid < maxSector && guard < 4096; guard += 1) {
+    const offset = (sid + 1) * sectorSize;
+    if (offset + sectorSize > buffer.length) break;
+    const slots = sectorSize / 4 - 1;
+    for (let i = 0; i < slots; i += 1) {
+      const next = buffer.readUInt32LE(offset + i * 4);
+      if (next !== 4294967295) fatSectorIds.push(next);
+    }
+    sid = buffer.readUInt32LE(offset + slots * 4);
+  }
+  const fat = [];
+  for (const sid of fatSectorIds) {
+    const offset = (sid + 1) * sectorSize;
+    if (offset + sectorSize > buffer.length) continue;
+    for (let i = 0; i < sectorSize / 4; i += 1) fat.push(buffer.readUInt32LE(offset + i * 4));
+  }
+  const readChain = (start, size) => {
+    const chunks = [];
+    let sid = start;
+    for (let guard = 0; guard < 1e5; guard += 1) {
+      if (!Number.isInteger(sid) || sid < 0 || sid >= fat.length) break;
+      const offset = (sid + 1) * sectorSize;
+      if (offset + sectorSize > buffer.length) break;
+      chunks.push(buffer.subarray(offset, offset + sectorSize));
+      sid = fat[sid];
+    }
+    return Buffer.concat(chunks).subarray(0, size);
+  };
+  const directory = readChain(dirStart, sectorSize * 8);
+  for (let i = 0; i < directory.length; i += 128) {
+    const entry = directory.subarray(i, i + 128);
+    const nameLength = entry.readUInt16LE(64);
+    if (nameLength < 2 || entry.readUInt8(66) !== 2) continue;
+    const name = entry.subarray(0, nameLength - 2).toString("utf16le");
+    if (name === "Workbook" || name === "Book") {
+      return readChain(entry.readUInt32LE(116), entry.readUInt32LE(120));
+    }
+  }
+  throw new Error("OLE2 \u6587\u6863\u91CC\u6CA1\u6709 Workbook \u6D41");
+}
+function decodeRk(rk) {
+  let value;
+  if (rk & 2) {
+    value = rk >> 2;
+  } else {
+    const scratch = Buffer.alloc(8);
+    scratch.writeUInt32LE(0, 0);
+    scratch.writeUInt32LE(rk & 4294967292, 4);
+    value = scratch.readDoubleLE(0);
+  }
+  return rk & 1 ? value / 100 : value;
+}
+function parseBiffCells(workbook) {
+  const shared = [];
+  for (let p = 0; p + 4 <= workbook.length; ) {
+    const type = workbook.readUInt16LE(p);
+    const length = workbook.readUInt16LE(p + 2);
+    if (p + 4 + length > workbook.length) break;
+    const body = workbook.subarray(p + 4, p + 4 + length);
+    if (type === 252) {
+      const unique = body.readUInt32LE(4);
+      let q = 8;
+      for (let i = 0; i < unique && q + 3 <= body.length; i += 1) {
+        const cch = body.readUInt16LE(q);
+        const flags = body.readUInt8(q + 2);
+        q += 3;
+        if (flags & 8) q += 2;
+        if (flags & 4) q += 4;
+        if (flags & 1) {
+          shared.push(body.subarray(q, q + cch * 2).toString("utf16le"));
+          q += cch * 2;
+        } else {
+          shared.push(body.subarray(q, q + cch).toString("latin1"));
+          q += cch;
+        }
+      }
+    }
+    p += 4 + length;
+  }
+  const cells = [];
+  for (let p = 0; p + 4 <= workbook.length; ) {
+    const type = workbook.readUInt16LE(p);
+    const length = workbook.readUInt16LE(p + 2);
+    if (p + 4 + length > workbook.length) break;
+    const body = workbook.subarray(p + 4, p + 4 + length);
+    p += 4 + length;
+    if (type === 253 && body.length >= 10) {
+      cells.push({ row: body.readUInt16LE(0), col: body.readUInt16LE(2), value: shared[body.readUInt32LE(6)] ?? "" });
+    } else if (type === 516 && body.length >= 9) {
+      const cch = body.readUInt16LE(6);
+      const flags = body.readUInt8(8);
+      cells.push({
+        row: body.readUInt16LE(0),
+        col: body.readUInt16LE(2),
+        value: body.subarray(9, 9 + (flags & 1 ? cch * 2 : cch)).toString(flags & 1 ? "utf16le" : "latin1")
+      });
+    } else if (type === 515 && body.length >= 14) {
+      cells.push({ row: body.readUInt16LE(0), col: body.readUInt16LE(2), value: body.readDoubleLE(6) });
+    } else if (type === 638 && body.length >= 10) {
+      cells.push({ row: body.readUInt16LE(0), col: body.readUInt16LE(2), value: decodeRk(body.readUInt32LE(6)) });
+    } else if (type === 189 && body.length >= 6) {
+      const row = body.readUInt16LE(0);
+      const firstCol = body.readUInt16LE(2);
+      const count = Math.floor((body.length - 6) / 6);
+      for (let i = 0; i < count; i += 1) {
+        cells.push({ row, col: firstCol + i, value: decodeRk(body.readUInt32LE(4 + i * 6 + 2)) });
+      }
+    }
+  }
+  return cells;
+}
+var HEADER_TOKENS = ["\u5E02\u76C8\u7387", "\u80A1\u606F\u7387", "\u6307\u6570\u4EE3\u7801"];
+function parseCsindexIndicator(workbook) {
+  const cells = parseBiffCells(workbook);
+  if (cells.length === 0) return [];
+  const byRow = /* @__PURE__ */ new Map();
+  for (const cell of cells) {
+    const row = byRow.get(cell.row) ?? /* @__PURE__ */ new Map();
+    row.set(cell.col, cell.value);
+    byRow.set(cell.row, row);
+  }
+  const rowIndexes = [...byRow.keys()].sort((a, b) => a - b);
+  let headerRow = -1;
+  const columns = { date: -1, code: -1, name: -1, pe1: -1, pe2: -1, dp1: -1, dp2: -1 };
+  for (const rowIndex of rowIndexes) {
+    const row = byRow.get(rowIndex);
+    const text = [...row.values()].filter((v) => typeof v === "string").join("|");
+    if (!HEADER_TOKENS.some((token) => text.includes(token))) continue;
+    headerRow = rowIndex;
+    for (const [col, value] of row) {
+      if (typeof value !== "string") continue;
+      const label = value.trim();
+      if (columns.date < 0 && /日期|Date/i.test(label)) columns.date = col;
+      else if (columns.code < 0 && /代码|Code/i.test(label)) columns.code = col;
+      else if (columns.name < 0 && /简称|Short ?Name|Index Chinese Name/i.test(label)) columns.name = col;
+      else if (columns.pe1 < 0 && /市盈率1|P\/E1/i.test(label)) columns.pe1 = col;
+      else if (columns.pe2 < 0 && /市盈率2|P\/E2/i.test(label)) columns.pe2 = col;
+      else if (columns.dp1 < 0 && /股息率1|D\/P1/i.test(label)) columns.dp1 = col;
+      else if (columns.dp2 < 0 && /股息率2|D\/P2/i.test(label)) columns.dp2 = col;
+    }
+    break;
+  }
+  if (headerRow < 0 || columns.date < 0) return [];
+  const toNumber = (value) => {
+    if (value === void 0 || value === "") return null;
+    const parsed = typeof value === "number" ? value : Number(String(value).replace(/[,%]/g, ""));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  };
+  const normalizeDate = (value) => {
+    const digits = String(value ?? "").replace(/[^0-9]/g, "");
+    if (digits.length < 8) return null;
+    return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+  };
+  const out = [];
+  for (const rowIndex of rowIndexes) {
+    if (rowIndex <= headerRow) continue;
+    const row = byRow.get(rowIndex);
+    const tradeDate = normalizeDate(row.get(columns.date));
+    const code = String(row.get(columns.code) ?? "").trim();
+    if (!tradeDate || !/^\d{6}$/.test(code)) continue;
+    out.push({
+      tradeDate,
+      code,
+      name: String(row.get(columns.name) ?? "").trim(),
+      peTotalShare: toNumber(row.get(columns.pe1)),
+      peCalcShare: toNumber(row.get(columns.pe2)),
+      dividendTotalShare: toNumber(row.get(columns.dp1)),
+      dividendCalcShare: toNumber(row.get(columns.dp2))
+    });
+  }
+  return out.sort((a, b) => b.tradeDate.localeCompare(a.tradeDate));
+}
+function supportsCsindex(instrument) {
+  return instrument.type === "INDEX" && /^(000|930|931|h30)?\d{6}$/i.test(instrument.code);
+}
+async function fetchCsindexIndicator(instrument) {
+  if (!supportsCsindex(instrument)) return [];
+  if (Date.now() < blockedUntil) return [];
+  await paced2();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS2);
+  try {
+    const response = await fetch(csindexIndicatorUrl(instrument.code), {
+      headers: { "User-Agent": UA2, Referer: "https://www.csindex.com.cn/" },
+      signal: controller.signal
+    });
+    if (response.status === 404) return [];
+    if (response.status === 403 || response.status === 429) {
+      blockedUntil = Date.now() + BLOCK_BACKOFF_MS;
+      throw new Error(`HTTP ${response.status} csindex \u9650\u6D41\uFF08${Math.round(BLOCK_BACKOFF_MS / 6e4)} \u5206\u949F\u5185\u4E0D\u518D\u8BF7\u6C42\uFF09`);
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status} csindex ${instrument.code}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.length < 512 || buffer.readUInt32LE(0) !== 3759263696) {
+      throw new Error("csindex \u8FD4\u56DE\u7684\u4E0D\u662F OLE2 \u8868\u683C\uFF08\u53EF\u80FD\u88AB\u62E6\u622A\u9875\u66FF\u6362\uFF09");
+    }
+    return parseCsindexIndicator(readOleWorkbook(buffer));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function snapshotToMetrics(instrumentId, snapshots) {
+  if (snapshots.length === 0) return { latest: [], history: [] };
+  const history = [];
+  for (const snapshot of snapshots) {
+    const asOfDate = snapshot.tradeDate;
+    const quality = "FRESH";
+    if (snapshot.peCalcShare !== null) history.push({ instrumentId, metricKey: "pe_official", value: String(snapshot.peCalcShare), asOfDate, quality });
+    if (snapshot.peTotalShare !== null) history.push({ instrumentId, metricKey: "pe_official_total_share", value: String(snapshot.peTotalShare), asOfDate, quality });
+    if (snapshot.dividendCalcShare !== null) history.push({ instrumentId, metricKey: "dividend_yield", value: String(snapshot.dividendCalcShare), asOfDate, quality });
+    if (snapshot.dividendTotalShare !== null) history.push({ instrumentId, metricKey: "dividend_yield_total_share", value: String(snapshot.dividendTotalShare), asOfDate, quality });
+  }
+  const newest = snapshots[0].tradeDate;
+  const latest = history.filter((row) => row.asOfDate === newest).map((row) => ({
+    metricKey: row.metricKey,
+    value: row.value,
+    asOfDate: row.asOfDate,
+    quality: row.quality
+  }));
+  return { latest, history };
+}
+
 // plugin/server/src/services/refresh.ts
 var MIN_PERCENTILE_SAMPLES = 20;
+var MIN_PERCENTILE_SPAN_DAYS = 180;
 function daysAgo(days) {
   const d = /* @__PURE__ */ new Date();
   d.setUTCDate(d.getUTCDate() - days);
@@ -4330,6 +4595,33 @@ async function refreshMarketData(ctx, filter = {}) {
     const currentMetrics = /* @__PURE__ */ new Map();
     let historyDone = false;
     let estimateTried = false;
+    if (instrument.type === "INDEX") {
+      try {
+        const snapshots2 = await fetchCsindexIndicator(instrument);
+        if (snapshots2.length > 0) {
+          const { latest, history } = snapshotToMetrics(instrument.id, snapshots2);
+          for (const row of history) {
+            saveValuationMetric(ctx.handle, {
+              instrumentId: instrument.id,
+              metricKey: row.metricKey,
+              value: row.value,
+              asOfDate: row.asOfDate,
+              provider: "csindex",
+              quality: row.quality
+            });
+          }
+          for (const metric of latest) {
+            writtenMetricKeys.add(metric.metricKey);
+            item.metrics += 1;
+            if (metric.value !== null) currentMetrics.set(metric.metricKey, { value: metric.value, asOfDate: metric.asOfDate });
+          }
+          item.provider = item.provider ?? "csindex";
+          item.providers = [.../* @__PURE__ */ new Set([...item.providers, "csindex"])];
+        }
+      } catch (error) {
+        notes.push(`\u4E2D\u8BC1\u5B98\u65B9\u4F30\u503C\u5931\u8D25\uFF1A${messageOf(error)}`);
+      }
+    }
     for (const provider of providers) {
       try {
         const quote = await provider.fetchQuote(instrument);
@@ -4414,9 +4706,11 @@ async function refreshMarketData(ctx, filter = {}) {
     for (const key of ["pe", "pb"]) {
       const current = currentMetrics.get(key);
       if (!current) continue;
-      const history = metricHistory(ctx.handle, instrument.id, key, sinceDate).map((h) => h.value);
-      if (history.length < MIN_PERCENTILE_SAMPLES) continue;
-      const pct2 = percentile(history, Number(current.value));
+      const series = metricHistory(ctx.handle, instrument.id, key, sinceDate);
+      if (series.length < MIN_PERCENTILE_SAMPLES) continue;
+      const spanDays = (Date.parse(`${current.asOfDate}T00:00:00Z`) - Date.parse(`${series[0].asOfDate}T00:00:00Z`)) / 864e5;
+      if (!Number.isFinite(spanDays) || spanDays < MIN_PERCENTILE_SPAN_DAYS) continue;
+      const pct2 = percentile(series.map((h) => h.value), Number(current.value));
       if (pct2 === null) continue;
       saveValuationMetric(ctx.handle, {
         instrumentId: instrument.id,
@@ -5211,7 +5505,7 @@ function getRebalancePlan(ctx) {
 }
 
 // plugin/server/src/api.ts
-var APP_VERSION = "0.1.2";
+var APP_VERSION = "0.1.3";
 var MASKED_KEYS = /* @__PURE__ */ new Set([
   "totalMarketValue",
   "marketValue",
@@ -5705,22 +5999,22 @@ async function dispatch(ctx, method, params = {}) {
 }
 
 // plugin/server/src/market/tencent.ts
-var UA2 = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
-var TIMEOUT_MS2 = 12e3;
-var MIN_INTERVAL_MS2 = 200;
-var lastRequestAt2 = 0;
-async function paced2() {
-  const wait = lastRequestAt2 + MIN_INTERVAL_MS2 - Date.now();
+var UA3 = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
+var TIMEOUT_MS3 = 12e3;
+var MIN_INTERVAL_MS3 = 200;
+var lastRequestAt3 = 0;
+async function paced3() {
+  const wait = lastRequestAt3 + MIN_INTERVAL_MS3 - Date.now();
   if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-  lastRequestAt2 = Date.now();
+  lastRequestAt3 = Date.now();
 }
 async function fetchGbkText(url) {
-  await paced2();
+  await paced3();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS2);
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS3);
   try {
     const response = await fetch(url, {
-      headers: { "User-Agent": UA2, Referer: "https://gu.qq.com/" },
+      headers: { "User-Agent": UA3, Referer: "https://gu.qq.com/" },
       signal: controller.signal
     });
     if (!response.ok) throw new Error(`HTTP ${response.status} ${url.slice(0, 120)}`);
@@ -5735,12 +6029,12 @@ async function fetchGbkText(url) {
   }
 }
 async function fetchJson2(url) {
-  await paced2();
+  await paced3();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS2);
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS3);
   try {
     const response = await fetch(url, {
-      headers: { "User-Agent": UA2, Referer: "https://gu.qq.com/" },
+      headers: { "User-Agent": UA3, Referer: "https://gu.qq.com/" },
       signal: controller.signal
     });
     if (!response.ok) throw new Error(`HTTP ${response.status} ${url.slice(0, 120)}`);
@@ -5953,7 +6247,7 @@ function createDefaultRegistry() {
 
 // plugin/targets/mcp/server.ts
 var SERVER_NAME = "plug-funds";
-var SERVER_VERSION = "0.1.2";
+var SERVER_VERSION = "0.1.3";
 var PROTOCOL_VERSION = "2024-11-05";
 var str3 = (description) => ({ type: "string", description });
 var num3 = (description) => ({ type: "number", description });

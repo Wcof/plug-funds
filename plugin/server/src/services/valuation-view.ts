@@ -100,7 +100,12 @@ function caliberFor(instrument: Instrument, metrics: MetricLite[], pe: number | 
   if (instrument.type === 'STOCK') {
     caliber = `个股 PE-TTM / PB · ${asOf ?? '暂无披露'}`;
   } else if (instrument.type === 'INDEX') {
-    caliber = asOf ? `指数估值截面 · ${asOf}` : '指数估值截面 · 暂无数据';
+    const official = metrics.find((m) => m.key === 'pe_official');
+    const dividend = metrics.find((m) => m.key === 'dividend_yield');
+    const parts = [`指数 PE ${pe === null ? '未获取' : '报价端口径'}`];
+    if (official) parts.push(`中证官方 PE2 ${official.value}（${official.asOfDate}）`);
+    if (dividend) parts.push(`股息率 ${dividend.value}%`);
+    caliber = parts.join(' · ');
   } else if (isFund && !hasIndexLink && pe === null) {
     caliber = '主动基金 · 持仓披露滞后（季报），不提供实时穿透估值';
   } else if ((isFund || isEtf) && hasIndexLink) {

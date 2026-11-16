@@ -60,17 +60,21 @@ plugin/
 - **指数页首次可用**：进入指数页且本机无 INDEX 标的 / 无任何收盘点位时，前端自动调 `bootstrap_indices`（建 8 个常用宽基指数 + 立刻拉一次真实行情）。该入口只写标的元数据（代码 / 名称 / secid），价格与估值一律由 `refresh_market_data` 从数据源拉取；单个标的失败只回传原因，禁止填 0 或伪造数值，也不得把「自动建标的」做成静默的后台预填。
 - **估值页要列全部标的**：`get_holdings_valuation` 的 `scope` 决定口径——`holdings`（默认，总览 / 持仓页用）只出持仓；`all`（估值页用）出全部 `active` 标的并按「持仓优先」排序。缺指标的行必须留在列表里显示「数据不足」，不许因为没有持仓 / 没有 PE 就把它过滤掉；风险指标直接读库内 `effectiveHistoryPoints`，不要为了拿波动率去调 `getInstrumentChartSeries`（那会为每只标的重放一遍全部流水）。
 - **页面渲染不能整站白屏**：前端任何一页在渲染期抛错，React 18 会卸载整棵树，用户只看到空白且侧栏一起消失。`main.tsx` 的 `PageBoundary` 兜住这种情况并显示错误正文；新增页面若出现「点开就是白屏」，先查渲染期异常（典型如 `useCallback` / `useEffect` 依赖数组里写了作用域外的变量——`[range]` 写进 `ValuationPage` 就是这个坑，esbuild 不报错，只有浏览器里崩）。`npm run verify:web` 已加断言：点「估值」「设置」必须出内容且全程不出现错误横幅。
+- **估值指标口径不许混用**：报价端 `pe`（腾讯 TTM / 东财 f164）与中证官网 `pe_official`（PE2 计算用股本）、`pe_official_total_share`（PE1 总股本）是**三种不同口径**，实测同一指数可差 2%–19%。官方值必须落独立键，不许顶替 `pe`——一旦混用，历史分位与跨标的比较会静默跳变。`dividend_yield` 只有中证官网提供，可作为主值。核查用 `node plugin/scripts/audit-metrics.mjs`，判定标准：|<1%| 一致、|<5%| 口径差异、|<10%| 需复核、|≥10%| 冲突。
+- **分位必须有跨度守卫**：`pe_percentile` / `pb_percentile` 的语义是「近 3 年分位」。样本数 ≥20 但时间跨度 <180 天时（例如刚从中证官网导入 20 个交易日），算出来的是「近 1 月分位」，套用模板阈值会产生看似确定、实则无意义的结论 —— 宁可不写、让 UI 显示「数据不足」。`MIN_PERCENTILE_SPAN_DAYS` 是这个守卫，不允许为了提高评分覆盖率而放宽。
+- **中证官网 xls 是 OLE2 + BIFF8**：`market/csindex.ts` 自带最小解析器（`readOleWorkbook` + `parseBiffCells`），按表头关键字定位列而不是写死列号。只覆盖中证 / 上证系列，深证成指 / 创业板指（国证发布）返回 404 → 空数组 + 如实标注「数据源未覆盖」。该 OSS 有 WAF 限流，短时间密集请求会返回 403 HTML，必须低频 + 失败显式，不得把 HTML 当数据解析。
 - **钥匙串**：AI Key 优先存系统钥匙串，SQLite 只留 `__keychain__` 哨兵；不可用时降级并在 `secretBackend` 如实上报，不得静默假装已加密。测试用 `PLUG_FUNDS_DISABLE_KEYCHAIN=1` 关闭。
 
 ## 验证入口
 
 ```bash
-npm test                      # 167 个测试
+npm test                      # 172 个测试
 npm run check                 # 自包含校验（含 MCP 产物）+ web 产物静态断言 + 全部测试
 node plugin/scripts/smoke.mjs # E2E 冒烟（隔离状态目录 + 真实 HTTP 全链路，21 项）
 npm run pack:dsh              # 构建 + 打包 tarball → integrations/dsh/dist/
 npm run verify:install        # 解包 tarball + 安装契约（SPA 挂载 / 指数页 / MCP）+ 隔离 RPC（45 项）
 npm run verify:web            # web 静态断言 + 真实 Chrome CDP 渲染（86 项）
+node plugin/scripts/audit-metrics.mjs  # 估值指标多源核查（腾讯 / 东财 / 中证官方，只读副本）
 node plugin/scripts/verify-web.mjs  # 仅静态层（无需 Chrome，可进 CI）
 ```
 

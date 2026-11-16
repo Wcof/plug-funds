@@ -134,14 +134,31 @@ test('parseFundGz：jsonpgz 文本 → ESTIMATED_NAV（与正式净值分离）'
   assert.equal(parseFundGz('jsonpgz({"gsz":""});', 'ins1'), null);
 });
 
-test('parseStockMetrics：PE / PB / 总市值（fltt=2 原始浮点）', () => {
+test('parseStockMetrics：PE-TTM / PB / ROE / 毛利率 / 总市值（fltt=2 原始浮点）', () => {
   const metrics = parseStockMetrics(
-    { data: { f115: 7.8, f167: 0.92, f20: 1.03e14 } },
+    { data: { f115: '-', f164: 7.12, f162: 7.01, f163: 7.25, f167: 0.92, f173: 10.12, f187: 44.23, f188: 89.9, f20: 1.03e14 } },
     'ins1',
     TODAY,
   );
-  assert.equal(metrics.find((m) => m.metricKey === 'pe')?.value, '7.8');
-  assert.equal(metrics.find((m) => m.metricKey === 'pb')?.value, '0.92');
-  assert.ok((metrics.find((m) => m.metricKey === 'scale_info')?.value ?? '').includes('亿'));
+  const value = (key: string): string | undefined => metrics.find((m) => m.metricKey === key)?.value;
+  // f115 在 fltt=2 下常为 "-"，PE-TTM 必须从 f164 取
+  assert.equal(value('pe'), '7.12');
+  assert.equal(value('pe_dynamic'), '7.01');
+  assert.equal(value('pe_static'), '7.25');
+  assert.equal(value('pb'), '0.92');
+  assert.equal(value('roe'), '10.12');
+  assert.equal(value('gross_margin_pct'), '44.23');
+  assert.equal(value('net_margin_pct'), '89.9');
+  assert.ok((value('scale_info') ?? '').includes('亿'));
   assert.equal(parseStockMetrics({ data: null }, 'ins1', TODAY).length, 0);
+
+  // 只有 f115（旧字段）时不再冒充 PE-TTM —— 取不到就是取不到
+  const legacy = parseStockMetrics({ data: { f115: 7.8 } }, 'ins1', TODAY);
+  assert.equal(legacy.find((m) => m.metricKey === 'pe'), undefined);
+
+  // 亏损股 PE 为负、字段为 "-"：一律跳过，不写 0
+  const loss = parseStockMetrics({ data: { f164: '-', f167: 1.2, f173: -3.5 } }, 'ins1', TODAY);
+  assert.equal(loss.find((m) => m.metricKey === 'pe'), undefined);
+  assert.equal(loss.find((m) => m.metricKey === 'roe'), undefined);
+  assert.equal(loss.find((m) => m.metricKey === 'pb')?.value, '1.2');
 });

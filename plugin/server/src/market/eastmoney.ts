@@ -73,7 +73,13 @@ function point(partial: Omit<MarketPoint, 'currency'>): MarketPoint {
 export interface StockGetPayload {
   data?: {
     f43?: number; f57?: string; f58?: string; f59?: number; f60?: number; f86?: number;
-    f115?: number; f167?: number; f20?: number;
+    /** PE-TTM（fltt=2 时 f115 常返回 "-"，真正可用的 TTM 是 f164）。 */
+    f115?: number | string; f162?: number; f163?: number; f164?: number;
+    f167?: number; f20?: number; f173?: number;
+    /** 毛利率 / 净利率（%）。 */
+    f187?: number; f188?: number;
+    /** 营收同比 / 净利同比（%）。 */
+    f184?: number; f186?: number;
   } | null;
 }
 
@@ -239,7 +245,13 @@ export function parseFundGz(text: string, instrumentId: string): MarketPoint | n
   });
 }
 
-/** 个股 / 指数估值指标：PE-TTM（f115）、PB（f167）、总市值（f20）。 */
+/**
+ * 个股估值指标。口径按东财 push2 的字段语义落库，不做换算：
+ * - `pe`：f164 = PE-TTM（f115 在 fltt=2 下常为 "-"，不可用）；
+ * - `pe_dynamic` / `pe_static`：f162 / f163，供对照「动态 / 静态」口径差异；
+ * - `pb`：f167；`roe`：f173；`gross_margin_pct`：f187；`net_margin_pct`：f188。
+ * 取不到（"-"、0、负数）一律跳过，不写 0 也不猜。
+ */
 export function parseStockMetrics(
   payload: StockGetPayload,
   instrumentId: string,
@@ -248,12 +260,20 @@ export function parseStockMetrics(
   const data = payload.data;
   if (!data) return [];
   const out: { metricKey: string; value: string | null; asOfDate: string; quality: MarketPoint['quality'] }[] = [];
-  if (typeof data.f115 === 'number' && data.f115 > 0) {
-    out.push({ metricKey: 'pe', value: String(data.f115), asOfDate: today, quality: 'FRESH' });
-  }
-  if (typeof data.f167 === 'number' && data.f167 > 0) {
-    out.push({ metricKey: 'pb', value: String(data.f167), asOfDate: today, quality: 'FRESH' });
-  }
+  const take = (metricKey: string, raw: number | string | undefined, opts: { positive?: boolean } = {}): void => {
+    if (raw === undefined || raw === null || raw === '' || raw === '-') return;
+    const value = Number(raw);
+    if (!Number.isFinite(value)) return;
+    if (opts.positive !== false && value <= 0) return;
+    out.push({ metricKey, value: String(Math.round(value * 100) / 100), asOfDate: today, quality: 'FRESH' });
+  };
+  take('pe', data.f164);
+  take('pe_dynamic', data.f162);
+  take('pe_static', data.f163);
+  take('pb', data.f167);
+  take('roe', data.f173);
+  take('gross_margin_pct', data.f187);
+  take('net_margin_pct', data.f188);
   if (typeof data.f20 === 'number' && data.f20 > 0) {
     out.push({ metricKey: 'scale_info', value: `总市值 ${(data.f20 / 1e8).toFixed(0)} 亿`, asOfDate: today, quality: 'FRESH' });
   }
@@ -367,7 +387,7 @@ export function createEastmoneyProvider(): MarketProvider {
       const secid = secidOf(target);
       if (!secid) return [];
       const payload = (await fetchJson(
-        `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&invt=2&fltt=2&fields=f43,f59,f115,f167,f20`,
+        `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&invt=2&fltt=2&fields=f43,f59,f115,f162,f163,f164,f167,f173,f184,f186,f187,f188,f20`,
       )) as StockGetPayload;
       const metrics = parseStockMetrics(payload, instrument.id, today);
       // 指数透传时忽略 scale_info（是指数的市值，不是基金的）

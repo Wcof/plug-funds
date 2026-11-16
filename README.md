@@ -12,10 +12,10 @@
 # 从源码构建 + 打包
 npm install
 npm run pack:dsh
-# 产物：integrations/dsh/dist/plug-funds-dsh-investment-0.1.2.tgz
+# 产物：integrations/dsh/dist/plug-funds-dsh-investment-0.1.3.tgz
 
 # 安装到 DSH（在 DSH 的插件安装入口 / plugin_manager 中执行）
-install_bundle target=/绝对路径/integrations/dsh/dist/plug-funds-dsh-investment-0.1.2.tgz
+install_bundle target=/绝对路径/integrations/dsh/dist/plug-funds-dsh-investment-0.1.3.tgz
 ```
 
 开发迭代用目录链接（改代码后重启 DSH 窗口即生效）：
@@ -38,7 +38,8 @@ remove_bundle target=@plug-funds/dsh-investment   # 卸载（不删用户数据�
 - **账本与数据**：交易流水唯一事实源、`requestId` 幂等；**CSV 与 Excel（.xlsx）流水导入**（预览 / 错误行可见 / 单事务提交 / 失败整批回滚；xlsx 在自包含约束下自解析 ZIP + XML，不引第三方库，并正确还原日期序列号、稀疏列、富文本与实体）；JSON 全量备份恢复（schema 校验 / 恢复前自动备份当前库 / 外键与回放一致性 / 失败回滚）；组合外部资金流水驱动 XIRR；每日组合与持仓快照、数据源运行记录。
 - **指数**：参考 `touzid.com/indice/#/6` 复刻「指数列表」——两行二级菜单、筛选工具条、双层分组表头、36 列高密度表格、左侧两列 sticky、排序 / 行选中 / 关注星标 / 导出 / 指标定义弹窗、桌面响应式；二级菜单 **16 项全部可切换**：列表 / 指标自定义 / ETF / 财务对比 / 历史涨跌幅 / 相关性 / RPS / 波动率 / 新高 / 新低 / 图形对比 / 定投 / 格雷厄姆 / 股债性价比 + **互联互通与两融**（数据源未覆盖时显示「需要什么数据」而非填 0）。数值一律取自本机 `valuation_metrics` / `market_points`（有效价格口径），分位点样本 <20 显示「—」；**不复制第三方真实行情**。首次打开指数页时自动执行 `bootstrap_indices`：建 8 个常用宽基指数标的（只写代码 / 名称 / 数据源映射）并立刻从腾讯 / 东财拉一次真实行情与估值，避免「装了插件却满屏 —」；拉不到就按标的显示失败原因，不填 0。本机确实无 `type=INDEX` 标的数据时仍启用「结构预览」，数值列全部为「—」并显式标注。
 - **设置**：分类管理（名称 + 颜色、括号计数、直接改名、删除）；AI 配置（Base URL / Key / 模型，OpenAI 兼容，手动触发，**Key 存系统钥匙串**）；行情自动刷新（默认 60 秒、可关闭、可配间隔、仅交易时段开关）；交易日历与当前时段展示；JSON / CSV 导出与备份恢复；隐藏金额。
-- **行情**：**腾讯财经为主源**（`qt.gtimg.cn` 实时 / `web.ifzq.gtimg.cn` K 线，覆盖 A 股 / ETF / 指数 / 港股 / 美股 / 场外基金最新净值）+ **东财兜底**（`push2` 报价与 K 线、`f10/lsjz` 场外基金历史净值、`pingzhongdata` 全量净值、`f10` 估值明细）+ 手工价格；有效价格统一口径 `MANUAL_PRICE > 当日 REALTIME > CLOSE / OFFICIAL_NAV`，同日多来源去重；**多源交叉校验**：同一标的同一天两个来源相对差 >1% 时标记 `CONFLICT` 并保留双方记录，不擅自选一个当正确答案；正式净值与盘中估算严格分离，估算不参与计价。
+- **行情**：**腾讯财经为主源**（`qt.gtimg.cn` 实时 / `web.ifzq.gtimg.cn` K 线，覆盖 A 股 / ETF / 指数 / 港股 / 美股 / 场外基金最新净值）+ **东财兜底**（`push2` 报价与 K 线、`f10/lsjz` 场外基金历史净值、`pingzhongdata` 全量净值、`f10` 估值明细）+ **中证指数官网官方估值**（`indicator.xls`：PE1 总股本 / PE2 计算用股本 / 股息率1 / 股息率2，20 个交易日截面）+ 手工价格；有效价格统一口径 `MANUAL_PRICE > 当日 REALTIME > CLOSE / OFFICIAL_NAV`，同日多来源去重；**多源交叉校验**：同一标的同一天两个来源相对差 >1% 时标记 `CONFLICT` 并保留双方记录，不擅自选一个当正确答案；正式净值与盘中估算严格分离，估算不参与计价。
+- **估值指标口径**：个股 `pe`（PE-TTM）/ `pb` / `roe` / 毛利率 / 净利率 取东财 `push2`（f164 / f167 / f173 / f187 / f188），腾讯 `pe` / `pb` 作交叉校验；指数 `pe` 取报价端、`pe_official`（PE2）与 `pe_official_total_share`（PE1）取中证官网，**三种口径分开存**（实测同一指数差 2%–19%，混用会让分位跳变），`dividend_yield` 只有中证官网提供；深证成指 / 创业板指由国证发布，中证文件不存在 → 如实标注「数据源未覆盖」，不拿别的指数顶替。核查命令：`node plugin/scripts/audit-metrics.mjs`（腾讯 / 东财 / 中证三源并列 + 偏差判定）。
 - **MCP（Zcode 等 MCP 宿主）**：同一套 server 层以 MCP 工具形式暴露（`mcp/index.js` + `mcp/manifest.json`，stdio + 换行分隔 JSON-RPC 2.0，17 个工具），不复制业务逻辑、不产生第二份数据。
 
 ## 数据与隐私
