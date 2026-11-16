@@ -3,7 +3,7 @@
  *
  * 来源：中证官网 `indexInfo/index-basic-info/<code>` 的 `publishDate`。
  * 边界：
- * - 只覆盖中证 / 上证系列（000 前缀）以及部分深市代码；国证自编系列没有公开的发布日期接口；
+ * - 此旧入口只请求 000 系列；完整中证/国证资料请用 collect-index-reference 与 backfill-index-reference；
  * - 该端点有独立 WAF：短时间批量请求后会整段 403（返回拦截页 HTML），此时必须退避重试，
  *   不能把 403 当成「没有数据」写空。
  *
@@ -14,10 +14,11 @@
  */
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
+import { openBackfillState } from './backfill-metrics.mjs';
+import { parsePublishDate } from '../server/src/market/index-reference.ts';
+import { todayLocal } from '../server/src/ids.ts';
 
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(scriptDir, '..', '..');
 const args = process.argv.slice(2);
 const apply = args.includes('--apply');
 const stateIndex = args.indexOf('--state');
@@ -27,17 +28,21 @@ const delayMs = delayIndex >= 0 ? Math.max(200, Number(args[delayIndex + 1]) || 
 const backoffIndex = args.indexOf('--backoff');
 const backoffSec = backoffIndex >= 0 ? Math.max(10, Number(args[backoffIndex + 1]) || 60) : 60;
 
-const { openState, resolveStateDirs } = await import(path.join(repoRoot, 'plugin/server/src/db.ts'));
-
-process.env.PLUG_FUNDS_STATE_DIR = stateDir;
-const handle = openState(resolveStateDirs());
+const handle = openBackfillState(stateDir, apply);
 handle.db.exec('PRAGMA busy_timeout = 15000;');
+if (apply) {
+  const backupDir = path.join(handle.dirs.data, 'backups');
+  fs.mkdirSync(backupDir, { recursive: true });
+  const backupPath = path.join(backupDir, `pre-index-dates-${Date.now()}.db`);
+  handle.db.prepare('VACUUM INTO ?').run(backupPath);
+  console.log(`[dates] 写入前备份：${backupPath}`);
+}
 
 const targets = handle.db
   .prepare("SELECT id, code, name FROM instruments WHERE type='INDEX' AND (founded_date IS NULL OR founded_date='') ORDER BY code")
   .all();
 const covered = targets.filter((t) => t.code.startsWith('000'));
-console.log(`[dates] 待补 ${targets.length} 个（000 系列 ${covered.length} 个有公开来源；其余 ${targets.length - covered.length} 个国证 / 深证自编系列无接口）`);
+console.log(`[dates] 待补 ${targets.length} 个（本入口请求 ${covered.length} 个 000 系列；其余用完整官方资料回填入口）`);
 console.log(`[dates] 模式 ${apply ? 'APPLY' : 'DRY-RUN'}｜间隔 ${delayMs}ms｜403 退避 ${backoffSec}s`);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -66,8 +71,8 @@ for (const [index, item] of covered.entries()) {
       const text = await response.text();
       if (!text.trimStart().startsWith('{')) throw new Error('返回非 JSON（疑似拦截页）');
       const payload = JSON.parse(text);
-      const date = payload?.data?.publishDate;
-      if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      const date = parsePublishDate(payload, 'csindex', item.code, todayLocal());
+      if (date) {
         if (apply) update.run(date, new Date().toISOString(), item.id);
         ok += 1;
         if (apply) console.log(`[dates] ${item.code} ${item.name} → ${date}`);
@@ -87,3 +92,4 @@ for (const [index, item] of covered.entries()) {
 console.log(`\n[dates] 完成：${apply ? '写入' : '可补'} ${ok} 个，403 次数 ${blocked}，跳过/失败 ${missing.length}`);
 for (const line of missing.slice(0, 10)) console.log('  -', line);
 if (!apply) console.log('[dates] dry-run 未写库；加 --apply 落库');
+handle.db.close();

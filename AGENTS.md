@@ -19,7 +19,7 @@ plugin/
 ├─ core/        # 宿主无关领域层（TS 纯函数：money/ledger/goal/valuation/risk/portfolio-risk/calendar/categories/strategy/rpc）
 ├─ server/      # Node 侧（node:sqlite 存储、migration、仓库层、服务层、api.ts 分发）
 │  ├─ market/   # Provider Adapter：tencent（主源）/ eastmoney（兜底 + 基金净值）/ provider 注册表 / conflict 冲突检测
-│  │            # csindex（官网 xls，WAF 常拦）/ csindex-valuation（官网 JSON：PB/股息率/PE 历史）
+│  │            # csindex（官网 xls）/ csindex-valuation（官网 JSON）/ cnindex（国证目录）/ index-reference（资料解析）
 │  ├─ services/ # dashboard / holdings / valuation-view / refresh / backup / import / restore / ai / indices
 │  │            # decision-readiness / risk / rebalance / calendar / index-valuation / index-analytics
 │  ├─ repo/     # accounts/instruments/transactions/categories/market/goal/ai/settings/cash/strategies/refresh-settings
@@ -63,7 +63,10 @@ plugin/
 - **估值页要列全部标的**：`get_holdings_valuation` 的 `scope` 决定口径——`holdings`（默认，总览 / 持仓页用）只出持仓；`all`（估值页用）出全部 `active` 标的并按「持仓优先」排序。缺指标的行必须留在列表里显示「数据不足」，不许因为没有持仓 / 没有 PE 就把它过滤掉；风险指标直接读库内 `effectiveHistoryPoints`，不要为了拿波动率去调 `getInstrumentChartSeries`（那会为每只标的重放一遍全部流水）。
 - **页面渲染不能整站白屏**：前端任何一页在渲染期抛错，React 18 会卸载整棵树，用户只看到空白且侧栏一起消失。`main.tsx` 的 `PageBoundary` 兜住这种情况并显示错误正文；新增页面若出现「点开就是白屏」，先查渲染期异常（典型如 `useCallback` / `useEffect` 依赖数组里写了作用域外的变量——`[range]` 写进 `ValuationPage` 就是这个坑，esbuild 不报错，只有浏览器里崩）。`npm run verify:web` 已加断言：点「估值」「设置」必须出内容且全程不出现错误横幅。
 - **估值指标口径不许混用**：报价端 PE、中证滚动 PE、静态 PE、PE2 计算用股本和 PE1 总股本分别保留来源与日期。不同日期或未证明同一口径的值标 `NOT_COMPARABLE`，不得按百分差直接宣布错误或冲突。只有同日、同口径才能做数值校验；覆盖原值、迁移报价和清理派生值须保留审计证据。核查入口为 `audit:metrics` 与 `audit:indices`。
-- **指数 PE 主序列**：有中证官方滚动 PE 历史时，`pe` 采用 `indexCsiDsPe`，报价端值独立保存在 `pe_quote`，不得混入官方历史。没有官方历史时可保留报价端 `pe`，明确标注口径待核实。跨口径或跨日期差异不能证明报价数值错误。静态 PE 落 `pe_official_static`；其他股本口径各用独立键。新增估值来源时先核对定义、日期和覆盖范围。
+- **指数 PE 主序列**：有中证官方滚动 PE 历史时，`pe` 采用 `indexCsiDsPe`，报价端值独立保存在 `pe_quote`，不得混入官方历史。尚未取得官方主值时可保留报价端 `pe`，明确标注口径待核实。跨口径或跨日期差异不能证明报价数值错误。静态 PE 落 `pe_official_static`；其他股本口径各用独立键。新增估值来源时先核对定义、日期和覆盖范围。
+- **国证官方与主序列选择**：`cnindex.ts` 校验完整目录总数、重复代码及抓取前后 `queryDay` 一致，只采纳 `399` 六位代码且 `indexsource=1` 的自编指数；`peDynamic` 为官网滚动 PE，`peStatic` 为静态 PE，市值原始单位为元。一轮刷新共享一次快照或失败，不逐标的重复请求。PE / PB 官方优先级为 `csindex > cnindex > csindex-factsheet`；报价隔离在 `pe_quote` / `pb_quote`，分位历史只取所选同源序列，不跨源拼接。
+- **官方月度单张**：离线脚本只接受资料目录指向的同码人民币价格指数 `factsheet.pdf`，校验统计日、计算用股本说明及原文 SHA-256。月度来源为 `csindex-factsheet`，保留实际日期与陈旧状态，不替代更高优先级主值；PE 和股息率单张对照值使用独立键。Python / pypdf 仅用于离线采集重放，不加入插件运行依赖。
+- **指数参考资料**：`app_settings` 的 `index_reference:<instrumentId>` 保存发布日期、官方关联目录统计、观察日、缺失依据及 URL / SHA-256。发布日期不能用基日替代；基金数按官方境内产品代码计，有明确上市交易所为场内，未上市的指数/联接/指数增强类型为场外，不推断合并份额。空数组只表示该目录为 0；`data:null`、疑似错码或分类不完整保留 null，历史统计或无统计日须明确标注。PS、财年 ROE 不由 PE / PB 比值推算。
 - **股息率口径分开**：XLS 股息率2写 `dividend_yield_calc_share`，股息率1写 `dividend_yield_total_share`；JSON 主值写 `dividend_yield`。非 JSON 覆盖时 XLS 可兜底主值，但 provider 必须为 `csindex-xls-calc-share`；已知或已有 JSON 覆盖时，失败/缺行不能以 XLS 覆盖主值。当前少量样本相等不能证明两个接口始终同口径。
 - **中证官方估值优先 JSON**：`market/csindex-valuation.ts` 使用 `https://www.csindex.com.cn/csindex-home/data-service/indexValuation`（快照：静态 PE / 滚动 PE / PB / 股息率）与 `/perf/indexCsiDsPe?indexCode=`（逐日滚动 PE 历史）。快照当前返回 8 只仪表盘指数，其他指数的 PB 在该接口中缺失，不代表所有公开来源均无数据。OSS `indicator/<code>indicator.xls` 作为补充来源，可能被 WAF 拦截；403 必须记录为请求失败，不能当成接口下线或指数没有数据。空数组、网络失败和解析失败分别记录，不推算或借用其他指数补空。
 - **收盘价只在收盘后写**：K 线接口盘中会返回「当日未完成 bar」，把它当 `CLOSE_PRICE` 入库等于用盘中价冒充收盘价（同一天还有一条真的 `REALTIME_PRICE`）。`refresh.ts` 的 `dropUnsettledClose()` 按会话阶段判断：只有 `after`（≥15:00）或 `closed-day` 才写当日收盘价，**午休（`lunch`）也不算收盘**——`session.open === false` 不等于收盘。回填历史时若发现当日 CLOSE 与 REALTIME 同时存在，先判断写入时刻再决定删哪条。
@@ -93,6 +96,9 @@ npm run verify:install        # 解包 tarball + 安装契约（SPA 挂载 / 指
 npm run verify:web            # web 静态断言 + 真实 Chrome CDP 渲染与 AI 交互
 node plugin/scripts/audit-metrics.mjs  # 估值指标多源核查（腾讯 / 东财 / 中证官方，只读副本）
 npm run backfill:metrics      # 官方估值回填（默认 dry-run；--apply 落库，写前先备份 ~/.plug-funds/data）
+npm run backfill:cnindex      # 国证目录估值回填（默认 dry-run；--apply 写前备份）
+npm run collect:reference -- --evidence .tmp/index-reference # 官方参考资料只读采集、断点续采
+npm run backfill:reference -- --evidence .tmp/index-reference # 校验原文并生成计划，--apply 写前备份
 npm run import:indices        # 导入沪深指数目录（000/399，默认 dry-run；--apply 只建标的、不写数值）
 npm run refresh:indices       # 批量刷新全部指数（分批调用同一 refreshMarketData）
 npm run fill:dates            # 补指数发布日期（中证 basic-info，遇 403 自动退避 / 中止）

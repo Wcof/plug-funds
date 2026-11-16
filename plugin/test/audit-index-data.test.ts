@@ -71,8 +71,8 @@ test('指数审计只读，按真实窗口、来源口径及逐键证据报告�
       INSERT INTO market_data VALUES ('future-price', 'a', 'CLOSE_PRICE', '100', '2026-11-17', '2026-11-17T08:00:00Z', 'fixture', 'FRESH');
       INSERT INTO market_data VALUES ('bad-observation', 'b', 'CLOSE_PRICE', '100', '2024-01-04', 'not-a-date', 'fixture', 'FRESH');
       INSERT INTO market_data VALUES ('remaining-premature', 'b', 'CLOSE_PRICE', '100', '2026-10-01', '2026-10-01T03:00:00Z', 'fixture', 'FRESH');
-      CREATE TABLE app_settings (key TEXT, value TEXT);
-      INSERT INTO app_settings VALUES ('api_key', 'SECRET_MUST_NOT_BE_READ');
+      CREATE TABLE app_settings (key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT);
+      INSERT INTO app_settings VALUES ('api_key', '"SECRET_MUST_NOT_BE_READ"', '2026-11-16T00:00:00Z');
       ALTER TABLE instruments ADD COLUMN private_extension TEXT;
       UPDATE instruments SET private_extension='SECRET_MUST_NOT_BE_EXPORTED';
     `);

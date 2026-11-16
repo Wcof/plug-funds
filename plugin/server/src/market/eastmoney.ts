@@ -83,13 +83,20 @@ export interface StockGetPayload {
   } | null;
 }
 
+function quoteDate(timestamp: unknown, today: string): string | null {
+  if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp <= 0) return null;
+  const instant = new Date(timestamp * 1000);
+  if (!Number.isFinite(instant.getTime())) return null;
+  const date = shanghaiParts(instant).date;
+  return date >= '1990-01-01' && date <= today ? date : null;
+}
+
 /** push2 `qt/stock/get`（fltt=2：数值为原始浮点）。 */
 export function parseStockQuote(payload: StockGetPayload, instrumentId: string, today: string): MarketPoint | null {
   const data = payload.data;
-  if (!data || typeof data.f43 !== 'number' || data.f43 <= 0) return null;
-  const tradingDate = typeof data.f86 === 'number' && data.f86 > 0
-    ? new Date(data.f86 * 1000).toISOString().slice(0, 10)
-    : today;
+  if (!data || typeof data.f43 !== 'number' || !Number.isFinite(data.f43) || data.f43 <= 0) return null;
+  const tradingDate = quoteDate(data.f86, today);
+  if (!tradingDate) return null;
   return point({
     instrumentId,
     priceType: tradingDate === today ? 'REALTIME_PRICE' : 'CLOSE_PRICE',
@@ -250,7 +257,7 @@ export function parseFundGz(text: string, instrumentId: string): MarketPoint | n
  * - `pe`：f164 = PE-TTM（f115 在 fltt=2 下常为 "-"，不可用）；
  * - `pe_dynamic` / `pe_static`：f162 / f163，供对照「动态 / 静态」口径差异；
  * - `pb`：f167；`roe`：f173；`gross_margin_pct`：f187；`net_margin_pct`：f188。
- * 取不到（"-"、0、负数）一律跳过，不写 0 也不猜。
+ * 日期来自报价时间；估值倍数要求正数，盈利率允许真实的零和负值。
  */
 export function parseStockMetrics(
   payload: StockGetPayload,
@@ -259,23 +266,27 @@ export function parseStockMetrics(
 ): { metricKey: string; value: string | null; asOfDate: string; quality: MarketPoint['quality'] }[] {
   const data = payload.data;
   if (!data) return [];
+  const asOfDate = quoteDate(data.f86, today);
+  if (!asOfDate) return [];
+  const quality = asOfDate === today ? 'FRESH' : 'DELAYED';
   const out: { metricKey: string; value: string | null; asOfDate: string; quality: MarketPoint['quality'] }[] = [];
   const take = (metricKey: string, raw: number | string | undefined, opts: { positive?: boolean } = {}): void => {
-    if (raw === undefined || raw === null || raw === '' || raw === '-') return;
+    if (raw == null || (typeof raw === 'string' && (raw.trim() === '' || raw.trim() === '-'))
+      || (typeof raw !== 'number' && typeof raw !== 'string')) return;
     const value = Number(raw);
     if (!Number.isFinite(value)) return;
     if (opts.positive !== false && value <= 0) return;
-    out.push({ metricKey, value: String(Math.round(value * 100) / 100), asOfDate: today, quality: 'FRESH' });
+    out.push({ metricKey, value: String(value), asOfDate, quality });
   };
   take('pe', data.f164);
   take('pe_dynamic', data.f162);
   take('pe_static', data.f163);
   take('pb', data.f167);
-  take('roe', data.f173);
-  take('gross_margin_pct', data.f187);
-  take('net_margin_pct', data.f188);
-  if (typeof data.f20 === 'number' && data.f20 > 0) {
-    out.push({ metricKey: 'scale_info', value: `总市值 ${(data.f20 / 1e8).toFixed(0)} 亿`, asOfDate: today, quality: 'FRESH' });
+  take('roe', data.f173, { positive: false });
+  take('gross_margin_pct', data.f187, { positive: false });
+  take('net_margin_pct', data.f188, { positive: false });
+  if (typeof data.f20 === 'number' && Number.isFinite(data.f20) && data.f20 > 0) {
+    out.push({ metricKey: 'scale_info', value: `总市值 ${data.f20 / 1e8} 亿`, asOfDate, quality });
   }
   return out;
 }
@@ -377,8 +388,8 @@ export function createEastmoneyProvider(): MarketProvider {
 
     async fetchMetrics(instrument) {
       const today = todayStr();
-      // 个股：直接取自身；基金 / ETF：有跟踪指数映射时透传指数估值
-      const target = instrument.type === 'STOCK'
+      // 个股与指数直接取自身；基金 / ETF 有跟踪指数映射时透传指数估值。
+      const target = instrument.type === 'STOCK' || instrument.type === 'INDEX'
         ? instrument
         : (instrument.benchmarkIndex && INDEX_SECIDS[instrument.benchmarkIndex]
           ? { ...instrument, secid: INDEX_SECIDS[instrument.benchmarkIndex], type: 'STOCK' as const, market: 'SH' as const, code: INDEX_SECIDS[instrument.benchmarkIndex].split('.')[1] }
@@ -387,11 +398,12 @@ export function createEastmoneyProvider(): MarketProvider {
       const secid = secidOf(target);
       if (!secid) return [];
       const payload = (await fetchJson(
-        `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&invt=2&fltt=2&fields=f43,f59,f115,f162,f163,f164,f167,f173,f184,f186,f187,f188,f20`,
+        `https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&invt=2&fltt=2&fields=f43,f57,f59,f86,f115,f162,f163,f164,f167,f173,f184,f186,f187,f188,f20`,
       )) as StockGetPayload;
+      if (payload.data && payload.data.f57 !== target.code) throw new Error(`东财估值代码不匹配：请求 ${target.code}`);
       const metrics = parseStockMetrics(payload, instrument.id, today);
       // 指数透传时忽略 scale_info（是指数的市值，不是基金的）
-      return instrument.type === 'STOCK' ? metrics : metrics.filter((m) => m.metricKey !== 'scale_info');
+      return instrument.type === 'STOCK' || instrument.type === 'INDEX' ? metrics : metrics.filter((m) => m.metricKey !== 'scale_info');
     },
 
     async fetchEstimate(instrument) {

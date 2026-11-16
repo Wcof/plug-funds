@@ -4,7 +4,7 @@
 
 产品口径与需求见 PRD v1.4（`/Users/ldh/Downloads/investment-workstation-prd-v1.1.md`，文件名保留 v1.1）；架构决策见 `docs/design/optimization-plan.md`。
 
-数据补齐、逐项校验与 AI 链路的规则和结果见 [2026-11-16 数据与 AI 校验报告](docs/reports/2026-11-16-data-ai-review.md)。
+数据补齐及逐项校验见 [2026-11-17 官方指数资料核验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-17-index-data-review.md) ；AI 链路的规则和验证见 [2026-11-16 数据与 AI 校验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-16-data-ai-review.md) 。
 
 ## 安装（DSH ≥ 0.2.1-rc.3）
 
@@ -14,10 +14,10 @@
 # 从源码构建 + 打包
 npm install
 npm run pack:dsh
-# 产物：integrations/dsh/dist/plug-funds-dsh-investment-0.1.4.tgz
+# 产物：integrations/dsh/dist/plug-funds-dsh-investment-0.1.5.tgz
 
 # 安装到 DSH（在 DSH 的插件安装入口 / plugin_manager 中执行）
-install_bundle target=/绝对路径/integrations/dsh/dist/plug-funds-dsh-investment-0.1.4.tgz
+install_bundle target=/绝对路径/integrations/dsh/dist/plug-funds-dsh-investment-0.1.5.tgz
 ```
 
 开发迭代用目录链接（改代码后重启 DSH 窗口即生效）：
@@ -38,10 +38,10 @@ remove_bundle target=@plug-funds/dsh-investment   # 卸载（不删用户数据�
 - **持仓详情**：九项基础信息（含当日 / 昨日收益、已持天数）；三 Tab 折线图（关联板块 / 业绩走势 / 我的收益＝累计收益金额）+ 成本线 / 保本线 + 买卖红绿标记 + 对比指数（默认沪深300）+ 周期筛选联动列表。
 - **估值**：内置 4 模板 + 自定义模板，可编辑、每次保存生成不可变版本、可回滚；规则评分 0–100（规则匹配度，非涨跌概率）；必需指标缺失 → 数据不足；支持手工补录估值指标并标注 MANUAL；PE / PB 历史分位以对应基础指标的日期为终点回看 3 年，须同时满足至少 20 个有效样本与 180 天跨度，不随刷新日期漂移。分位或基础指标过期、存在冲突或日期不一致时，该分位不参与当前评分。**列表覆盖全部标的**（`scope=all`：股票 / ETF / 场外基金 / 指数，含无持仓的观察标的，持仓优先排序并标「持仓」），按资产类别筛选 + 「仅持仓」开关；缺指标的行保留并显示「数据不足」，不因没有持仓而消失。
 - **账本与数据**：交易流水唯一事实源、`requestId` 幂等；**CSV 与 Excel（.xlsx）流水导入**（预览 / 错误行可见 / 单事务提交 / 失败整批回滚；xlsx 在自包含约束下自解析 ZIP + XML，不引第三方库，并正确还原日期序列号、稀疏列、富文本与实体）；JSON 全量备份恢复（schema 校验 / 恢复前自动备份当前库 / 外键与回放一致性 / 失败回滚）；组合外部资金流水驱动 XIRR；每日组合与持仓快照、数据源运行记录。
-- **指数**：参考 `touzid.com/indice/#/6` 复刻「指数列表」-- 两行二级菜单、筛选工具条、双层分组表头、36 列高密度表格、左侧两列 sticky、排序 / 行选中 / 关注星标 / 导出 / 指标定义弹窗、桌面响应式；二级菜单 **16 项全部可切换**：列表 / 指标自定义 / ETF / 财务对比 / 历史涨跌幅 / 相关性 / RPS / 波动率 / 新高 / 新低 / 图形对比 / 定投 / 格雷厄姆 / 股债性价比 + **互联互通与两融**（数据源未覆盖时显示「需要什么数据」而非填 0）。数值一律取自本机 `valuation_metrics` / `market_points`（有效价格口径）；列表分位按选定年限回看至对应基础指标的日期，有效样本少于 20 个或跨度不足 180 天时显示「—」；**不复制第三方真实行情**。首次打开指数页时自动执行 `bootstrap_indices`：建 8 个常用宽基指数标的（只写代码 / 名称 / 数据源映射）并立刻从腾讯 / 东财拉一次真实行情与估值，避免「装了插件却满屏 —」；拉不到就按标的显示失败原因，不填 0。本机确实无 `type=INDEX` 标的数据时仍启用「结构预览」，数值列全部为「—」并显式标注。**指数标的可按目录批量导入**：`npm run import:indices -- --apply` 从公开目录建 000（中证/上证）与 399（深证/国证）系列；表格默认每页 50 行（可切 100/200/500），避免 500+ 行 × 36 列一次渲染卡顿。「市值」列取自报价端「总市值 X 亿」原文解析；「发布时间」取已接入的中证官网端点，抓取受阻时明确记录原因，缺失项可用 `npm run fill:dates` 续补。
+- **指数**：参考 `touzid.com/indice/#/6` 复刻「指数列表」-- 两行二级菜单、筛选工具条、双层分组表头、36 列高密度表格、左侧两列 sticky、排序 / 行选中 / 关注星标 / 导出 / 指标定义弹窗、桌面响应式；二级菜单 **16 项全部可切换**：列表 / 指标自定义 / ETF / 财务对比 / 历史涨跌幅 / 相关性 / RPS / 波动率 / 新高 / 新低 / 图形对比 / 定投 / 格雷厄姆 / 股债性价比 + **互联互通与两融**（数据源未覆盖时显示「需要什么数据」而非填 0）。数值一律取自本机 `valuation_metrics` / `market_points`（有效价格口径）；列表分位按选定年限回看至对应基础指标的日期，有效样本少于 20 个或跨度不足 180 天时显示「—」；**不复制第三方真实行情**。首次打开指数页时自动执行 `bootstrap_indices`：建 8 个常用宽基指数标的（只写代码 / 名称 / 数据源映射）并立刻从腾讯 / 东财拉一次真实行情与估值，避免「装了插件却满屏 —」；拉不到就按标的显示失败原因，不填 0。本机确实无 `type=INDEX` 标的数据时仍启用「结构预览」，数值列全部为「—」并显式标注。**指数标的可按目录批量导入**：`npm run import:indices -- --apply` 从公开目录建 000（中证/上证）与 399（深证/国证）系列；表格默认每页 50 行（可切 100/200/500），避免 500+ 行 × 36 列一次渲染卡顿。「市值」列取自报价端「总市值 X 亿」原文解析；「发布时间」取中证 / 国证基本资料及经校验的官方单张，关联基金列显示官方目录代码数及其日期；抓取受阻、分类不完整或数据存疑时明确记录原因，参考资料可用 `collect:reference` 与 `backfill:reference` 续补。
 - **设置**：分类管理（名称 + 颜色、括号计数、直接改名、删除）；AI 配置（Base URL / Key / 模型，OpenAI 兼容，手动触发，**Key 存系统钥匙串**）；行情自动刷新（默认 60 秒、可关闭、可配间隔、仅交易时段开关）；交易日历与当前时段展示；JSON / CSV 导出与备份恢复；隐藏金额。
 - **行情**：**腾讯财经为主源**（`qt.gtimg.cn` 实时 / `web.ifzq.gtimg.cn` K 线，覆盖 A 股 / ETF / 指数 / 港股 / 美股 / 场外基金最新净值）+ **东财兜底**（`push2` 报价与 K 线、`f10/lsjz` 场外基金历史净值、`pingzhongdata` 全量净值、`f10` 估值明细）+ **中证指数官网官方估值**（已接入 JSON 快照中的静态 PE / 滚动 PE / **PB** / 股息率，以及逐日滚动 PE 历史；覆盖因指数和字段而异，部分历史可回溯到 2011 年；`indicator.xls` 作为补充，403 等抓取失败单独记录）+ 手工价格；有效价格统一口径 `MANUAL_PRICE > 当日 REALTIME > CLOSE / OFFICIAL_NAV`，同日多来源去重；**多源交叉校验**：同一标的、同一交易日、同一价格类型的两个来源相对差 >1% 时标记 `CONFLICT` 并保留双方记录，不擅自选一个当正确答案；正式净值与盘中估算严格分离，估算不参与计价。
-- **估值指标口径**：个股 `pe`（PE-TTM）/ `pb` 优先取腾讯报价，东财 `push2` 补充 `pe` / `pb` / `roe` / 毛利率 / 净利率（f164 / f167 / f173 / f187 / f188），可比数据用于交叉校验。已确认取得中证官方滚动 PE 的指数以该口径作为 `pe`，报价端数值保留在 `pe_quote`；静态 PE 用 `pe_official_static`，PE1 / PE2 用各自独立键。已接入的中证端点可提供部分指数的 `pb` 与 `dividend_yield`，不表示官方其他渠道或其他来源没有数据。深证成指、创业板指等若未从已接入端点取得相应字段，按实际返回区分「端点未覆盖」「抓取失败」或「待核实」，不借用其他指数数值。不同日期、股本口径或计算方法的差异不能直接认定为数值错误；无法确认可比性的报价与官方值并列留证，不混入同一历史分位序列。核查命令：`node plugin/scripts/audit-metrics.mjs`（腾讯 / 东财 / 中证来源并列与偏差记录）。
+- **估值指标口径**：个股 `pe`（PE-TTM）/ `pb` 优先取腾讯报价，东财 `push2` 补充 `pe` / `pb` / `roe` / 毛利率 / 净利率（f164 / f167 / f173 / f187 / f188），可比数据用于交叉校验。已确认取得中证官方滚动 PE 的指数以该口径作为 `pe`，报价端数值保留在 `pe_quote`；静态 PE 用 `pe_official_static`，PE1 / PE2 用各自独立键。已接入的中证端点可提供部分指数的 `pb` 与 `dividend_yield`，不表示官方其他渠道或其他来源没有数据。国证自编目录提供深证成指、创业板指等指数的滚动 PE / 静态 PE / PB；中证月度单张可补部分 PB，并保留统计日和陈旧状态。未取得的字段按实际返回区分「端点未覆盖」「抓取失败」或「待核实」，不借用其他指数数值。不同日期、股本口径或计算方法的差异不能直接认定为数值错误；无法确认可比性的报价与官方值并列留证，不混入同一历史分位序列。核查命令：`node plugin/scripts/audit-metrics.mjs`（腾讯 / 东财 / 中证来源并列与偏差记录）。
 - **MCP（Zcode 等 MCP 宿主）**：同一套 server 层以 MCP 工具形式暴露（`mcp/index.js` + `mcp/manifest.json`，stdio + 换行分隔 JSON-RPC 2.0，17 个工具），不复制业务逻辑、不产生第二份数据。
 
 ## 数据与隐私
@@ -66,6 +66,9 @@ npm run pack:dsh  # 构建 + 打包 tarball → integrations/dsh/dist/
 npm run verify:install  # 解包 tarball + 静态契约（含 SPA 挂载 / 指数页 / MCP）+ 隔离 HTTP/RPC（45 项）
 npm run verify:web      # web 静态断言 + 真实 Chrome CDP 渲染与 AI 交互验证
 npm run backfill:metrics # 中证官方估值回填（默认只体检；--apply 落库，写前先备份）
+npm run backfill:cnindex # 国证完整目录滚动 PE / 静态 PE / PB / 市值（默认 dry-run）
+npm run collect:reference -- --evidence .tmp/index-reference # 只读采集发布日期、关联目录、官方单张
+npm run backfill:reference -- --evidence .tmp/index-reference # 校验原文 SHA-256 后生成补齐计划
 npm run audit:metrics   # 估值指标多源核查（库内 / 腾讯 / 东财 / 中证官方并列对比）
 npm run audit:indices   # active INDEX 全字段 JSON/CSV 审计（缺失、来源、口径冲突、修正记录）
 npm run import:indices  # 导入沪深指数目录（000/399，默认 dry-run）
@@ -73,6 +76,10 @@ npm run import:indices -- --apply # 确认写入目录标识，不写行情数�
 npm run refresh:indices # 批量刷新全部指数（分批调用同一刷新链路）
 node plugin/scripts/verify-web.mjs           # 只跑静态层（无需 Chrome，适合 CI）
 ```
+
+国证目录估值已接入常规行情刷新，每轮共享一次完整目录快照；只采纳目录确认的国证自编指数。官方主序列优先级为中证、国证、经校验的中证月度单张，PE / PB 的报价留在独立键，历史统计只使用同源数据。月度单张保留统计日与 `STALE` 标记，不当作最新日频估值；发布日期取中证 / 国证基本资料，必要时用已核验单张补充。关联基金列按官方目录产品代码计数，明确统计日或观察日；没有列表、代码存疑或分类不完整时保留空值，空数组只表示该目录列出 0 条。
+
+参考资料通过上述离线脚本更新。`backfill:reference` 的 PDF 解析需要 Python 3 与 `pypdf`，可用 `--python /绝对路径/python3` 指定解释器；运行插件不需要 Python 或额外依赖。两个回填命令均须加 `--apply` 才写库，并在写入前备份。采集原文保存在所指定的 `.tmp/` 目录中，包含 URL、采集时间与 SHA-256，重放不把旧资料标成新采集。字段缺失、来源日期和缺样本原因同步到指数页及 CSV 导出。
 
 错误码：用户输入 / 外部数据校验失败为 `422 validation-error`，资源不存在为 `404 not-found`，账本冲突为 `422`，schema 冲突为 `409`；程序内部故障仍为 `500 internal-error`。
 

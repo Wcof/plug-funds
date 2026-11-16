@@ -32,6 +32,7 @@ const csvPath = arg('--csv');
 
 const { effectiveHistoryPoints, metricHistory, latestValuationMetrics } = await import(path.join(repoRoot, 'plugin/server/src/repo/market.ts'));
 const { percentile } = await import(path.join(repoRoot, 'plugin/core/src/valuation.ts'));
+const { getIndexReference } = await import(path.join(repoRoot, 'plugin/server/src/repo/index-reference.ts'));
 
 // openState 会建目录、更新 schema；审计必须直接只读打开，绝不隐式迁移。
 const handle = { db: new DatabaseSync(path.join(stateDir, 'data', 'invest.db'), { readOnly: true }) };
@@ -172,7 +173,7 @@ function fieldStatusForMetric(metric, key) {
   if ((key === 'pe' || key === 'pb') && metric.value <= 0) return status('SUSPECT', `${key.toUpperCase()} 必须为正数`);
   if (key === 'dividend_yield' && metric.value < 0) return status('SUSPECT', '股息率不能为负数');
   if (key === 'turnover_rate' && metric.value < 0) return status('SUSPECT', '换手率不能为负数');
-  if (key === 'pe' && metric.provider !== 'csindex') return status('SUSPECT', '报价端 PE 口径未核实，不等同于已证明数值错误');
+  if (key === 'pe' && !['csindex', 'cnindex'].includes(metric.provider)) return status('SUSPECT', '报价端 PE 口径未核实，不等同于已证明数值错误');
   if (key === 'pe' && metric.value > 200) return status('SUSPECT', 'PE > 200，属于极端值，保留并要求人工复核');
   if (key === 'pb' && metric.value > 20) return status('SUSPECT', 'PB > 20，属于极端值，保留并要求人工复核');
   if (key === 'dividend_yield' && metric.value > 20) return status('SUSPECT', '股息率 > 20%，属于极端值，保留并要求人工复核');
@@ -318,9 +319,11 @@ for (const instrument of instruments) {
   const issues = [];
   const corrections = [];
 
-  const publishStatus = instrument.founded_date
+  const reference = getIndexReference(handle, instrument.id);
+  const funds = reference?.funds ?? null;
+  const publishStatus = reference?.publishStatus ?? (instrument.founded_date
     ? (validDate(instrument.founded_date) && instrument.founded_date <= today ? status('VALID') : status('SUSPECT', '发布日期非法或在未来'))
-    : status('MISSING', '缺少发布日期；不能由代码前缀推定无公开来源或网络故障');
+    : status('MISSING', '缺少发布日期；不能由代码前缀推定无公开来源或网络故障'));
   if (publishStatus.state !== 'VALID') issues.push({ field: 'publishDate', ...publishStatus });
 
   const closeStatus = close === null ? status('MISSING', '没有有效价格；缺失原因待核实')
@@ -332,8 +335,8 @@ for (const instrument of instruments) {
   if (ytdStatus.state !== 'VALID') issues.push({ field: 'ytdReturn', ...ytdStatus });
 
   const peStatus = fieldStatusForMetric(pe, 'pe');
-  const pbStatus = fieldStatusForMetric(pb, 'pb');
-  const psStatus = fieldStatusForMetric(ps, 'ps');
+  const pbStatus = !pb && reference?.unavailable.pb ? status('MISSING', reference.unavailable.pb) : fieldStatusForMetric(pb, 'pb');
+  const psStatus = !ps && reference ? status('MISSING', reference.unavailable.ps) : fieldStatusForMetric(ps, 'ps');
   const divStatus = fieldStatusForMetric(dividend, 'dividend_yield');
   const turnoverStatus = fieldStatusForMetric(turnover, 'turnover_rate');
   for (const [field, s] of [['pe.current', peStatus], ['pb.current', pbStatus], ['ps.current', psStatus], ['dividendYield', divStatus], ['turnoverRate', turnoverStatus]]) {
@@ -351,13 +354,14 @@ for (const instrument of instruments) {
   const roe = [0, 1, 2].map((i) => roeByYear.get(roeYears[i]) ?? null);
   const roeStatus = roe.some((v) => v !== null) ? status('SUSPECT', '只有观察日期，财报年度与计算口径未核实，不能宣称为近 3 个财年的 ROE')
     : roeHistory.length > 0 ? status('MISSING', '已有其他年份观测，但前 3 个日历年缺少可用 ROE 观测')
-      : status('UNSUPPORTED', '项目未接入指数 ROE 数据源，不代表外部不存在该数据');
+      : reference ? status('MISSING', reference.unavailable.roe) : status('UNSUPPORTED', '项目未接入指数 ROE 数据源，不代表外部不存在该数据');
   issues.push({ field: 'roe', ...roeStatus });
   if (marketValueStatus.state !== 'VALID') issues.push({ field: 'marketValue', ...marketValueStatus });
-  issues.push({ field: 'fundOn/fundOff', state: 'UNSUPPORTED', reason: '项目未接入场内/场外基金数量数据' });
+  const fundStatus = funds?.status ?? status('MISSING', reference?.unavailable.funds ?? '尚未取得官方关联产品清单');
+  if (fundStatus.state !== 'VALID') issues.push({ field: 'fundOn/fundOff', ...fundStatus });
 
   const quote = currentMetric(metrics, 'pe_quote');
-  const peComparison = pe?.provider === 'csindex' && quote ? compareVerdict(pe, quote) : null;
+  const peComparison = pe && ['csindex', 'cnindex'].includes(pe.provider) && quote ? compareVerdict(pe, quote) : null;
   corrections.push(...(removedPrematureClose.get(instrument.id) ?? []));
 
   const fieldStates = {
@@ -374,8 +378,8 @@ for (const instrument of instruments) {
     dividendYield: divStatus,
     turnoverRate: turnoverStatus,
     marketValue: marketValueStatus,
-    fundOn: status('UNSUPPORTED', '未建模'),
-    fundOff: status('UNSUPPORTED', '未建模'),
+    fundOn: fundStatus,
+    fundOff: fundStatus,
   };
   for (const state of Object.values(fieldStates)) addCount(state.state);
   rows.push({
@@ -399,8 +403,10 @@ for (const instrument of instruments) {
     priceLabel: '有效点位；REALTIME_PRICE 不是收盘价',
     ytdReturn,
     ytdBaseDate: firstValue === null ? null : yearEndBase.tradingDate,
-    fundOn: null,
-    fundOff: null,
+    fundOn: funds?.on ?? null,
+    fundOff: funds?.off ?? null,
+    fundReference: funds,
+    reference,
     pe: { ...peStats, provider: pe?.provider ?? null, asOfDate: pe?.asOfDate ?? null },
     pb: { ...pbStats, provider: pb?.provider ?? null, asOfDate: pb?.asOfDate ?? null },
     ps: { ...psStats, provider: ps?.provider ?? null, asOfDate: ps?.asOfDate ?? null },
@@ -442,7 +448,7 @@ const report = {
   rules: {
     percentile: '基础指标日前向 3 年，同一来源样本数 >= 20 且跨度 >= 180 天；基础指标超过 7 天标 STALE，基础指标或历史冲突/存疑时不产生当前分位',
     effectivePrice: 'MANUAL_PRICE > 当日 REALTIME_PRICE > CLOSE_PRICE / OFFICIAL_NAV',
-    pe: '指数优先中证官方滚动 PE；官方未覆盖时保留报价端 pe，并标记 SUSPECT；官方与报价跨日期/口径比较为 NOT_COMPARABLE',
+    pe: '指数优先采用已有中证官方滚动 PE；国证自编目录覆盖时采用国证官方滚动 PE，二者不拼接历史；报价端 pe 口径待核实，标记 SUSPECT；跨日期/口径比较为 NOT_COMPARABLE',
     sources: 'Touzid 仅用于字段结构参考，不写入本地真实数值；本脚本不发起外部请求',
     missing: '没有逐字段请求证据时使用 MISSING，不由代码前缀或缺值推断网络故障/无公开来源',
     ytd: '使用距上一年 12 月 31 日不超过 14 天的最近有效价作为基准，排除 REALTIME_PRICE、CONFLICT、MISSING；缺基准时不计算',

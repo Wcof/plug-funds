@@ -13,6 +13,7 @@
  * - 解析逻辑拆成纯函数，以 fixture 单测锁定，不依赖网络。
  */
 import { SCALE_QTY, formatFixed, parseFixed } from '../../../core/src/money.ts';
+import { shanghaiParts } from '../../../core/src/calendar.ts';
 import type { Instrument, MarketPoint } from '../../../core/src/types.ts';
 import type { HistoryRequest, MarketProvider } from './provider.ts';
 
@@ -277,7 +278,7 @@ export function parseTencentMetrics(
 /* ---------------- Provider 实现 ---------------- */
 
 export function createTencentProvider(): MarketProvider {
-  const todayStr = (): string => new Date().toISOString().slice(0, 10);
+  const todayStr = (): string => shanghaiParts(new Date()).date;
 
   return {
     id: 'tencent',

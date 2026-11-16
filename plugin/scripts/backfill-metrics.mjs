@@ -164,7 +164,7 @@ export async function backfillMetrics({
       auditMetrics(before, historyMetrics, row.historyCounts, row.sourceChanges, 'history');
       auditMetrics(before, snapshotMetrics, row.snapshotCounts, row.sourceChanges, 'snapshot');
       const officialAvailable = historyMetrics.length > 0 || snapshotMetrics.some((metric) => metric.metricKey === 'pe');
-      const quotes = stored.filter((metric) => metric.metricKey === 'pe' && metric.provider !== 'csindex');
+      const quotes = stored.filter((metric) => metric.metricKey === 'pe' && !['csindex', 'cnindex'].includes(metric.provider));
       const migratedDates = new Set();
       if (officialAvailable) {
         for (const quote of quotes) {

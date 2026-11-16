@@ -16,6 +16,7 @@ import {
   parseStockQuote,
   secidOf,
   sliceJsArray,
+  createEastmoneyProvider,
 } from '../server/src/market/eastmoney.ts';
 import type { Instrument } from '../core/src/types.ts';
 
@@ -31,6 +32,45 @@ test('secidOf：显式 secid 优先，SH/SZ 推导，OTC 为空', () => {
   assert.equal(secidOf(ins), '1.600036');
   assert.equal(secidOf({ ...ins, secid: null, market: 'SZ', code: '002475' }), '0.002475');
   assert.equal(secidOf({ ...ins, secid: null, market: 'OTC' }), null);
+});
+
+test('东财估值保留源日期、负盈利率，拒绝无日期、未来日期和空白值', () => {
+  const f86 = Date.parse('2026-11-12T23:30:00+08:00') / 1000;
+  const metrics = parseStockMetrics({ data: { f86, f164: 12.3456, f173: -3.5, f187: 0, f188: ' ' } }, 'ins1', TODAY);
+  assert.ok(metrics.every((m) => m.asOfDate === '2026-11-12' && m.quality === 'DELAYED'));
+  assert.equal(metrics.find((m) => m.metricKey === 'pe')?.value, '12.3456');
+  assert.equal(metrics.find((m) => m.metricKey === 'roe')?.value, '-3.5');
+  assert.equal(metrics.find((m) => m.metricKey === 'gross_margin_pct')?.value, '0');
+  assert.equal(metrics.find((m) => m.metricKey === 'net_margin_pct'), undefined);
+  assert.deepEqual(parseStockMetrics({ data: { f164: 12 } }, 'i', TODAY), []);
+  assert.deepEqual(parseStockMetrics({ data: { f86: Infinity, f164: 12 } }, 'i', TODAY), []);
+  assert.deepEqual(parseStockMetrics({ data: { f86: Date.parse('2027-01-01') / 1000, f164: 12 } }, 'i', TODAY), []);
+  const midnight = parseStockMetrics({ data: { f86: Date.parse(`${TODAY}T00:30:00+08:00`) / 1000, f164: 12 } }, 'i', TODAY);
+  assert.equal(midnight[0].asOfDate, TODAY);
+});
+
+test('东财 INDEX 直接取自身估值和市值；基金映射不透传指数市值；错码拒绝', async () => {
+  const original = globalThis.fetch;
+  const requests: URL[] = [];
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input)); requests.push(url);
+    return Response.json({ data: { f57: '399001', f86: Date.parse(`${TODAY}T15:00:00+08:00`) / 1000,
+      f164: 19.258, f167: 2.16, f20: 23276633043254.82 } });
+  };
+  try {
+    const provider = createEastmoneyProvider();
+    const metrics = await provider.fetchMetrics!({ ...ins, code: '399001', type: 'INDEX', market: 'SZ', secid: '0.399001' });
+    assert.equal(requests[0].searchParams.get('secid'), '0.399001');
+    assert.ok(requests[0].searchParams.get('fields')?.includes('f86'));
+    assert.equal(metrics.find((m) => m.metricKey === 'pb')?.value, '2.16');
+    assert.ok(metrics.some((m) => m.metricKey === 'scale_info'));
+    // 已知映射中的沪深300，返回相同代码供身份断言。
+    globalThis.fetch = async () => Response.json({ data: { f57: '000300', f86: Date.parse(`${TODAY}T15:00:00+08:00`) / 1000, f164: 12, f20: 1e12 } });
+    const fund = await provider.fetchMetrics!({ ...ins, type: 'ETF', benchmarkIndex: '沪深300' });
+    assert.ok(!fund.some((m) => m.metricKey === 'scale_info'));
+    globalThis.fetch = async () => Response.json({ data: { f57: '399006', f86: Date.parse(`${TODAY}T15:00:00+08:00`) / 1000, f164: 12 } });
+    await assert.rejects(provider.fetchMetrics!({ ...ins, code: '399001', type: 'INDEX', secid: '0.399001' }), /代码不匹配/);
+  } finally { globalThis.fetch = original; }
 });
 
 test('parseStockQuote：当日实时 → REALTIME_PRICE / FRESH', () => {
@@ -136,7 +176,7 @@ test('parseFundGz：jsonpgz 文本 → ESTIMATED_NAV（与正式净值分离）'
 
 test('parseStockMetrics：PE-TTM / PB / ROE / 毛利率 / 总市值（fltt=2 原始浮点）', () => {
   const metrics = parseStockMetrics(
-    { data: { f115: '-', f164: 7.12, f162: 7.01, f163: 7.25, f167: 0.92, f173: 10.12, f187: 44.23, f188: 89.9, f20: 1.03e14 } },
+    { data: { f86: Date.parse(`${TODAY}T15:00:00+08:00`) / 1000, f115: '-', f164: 7.12, f162: 7.01, f163: 7.25, f167: 0.92, f173: 10.12, f187: 44.23, f188: 89.9, f20: 1.03e14 } },
     'ins1',
     TODAY,
   );
@@ -157,8 +197,8 @@ test('parseStockMetrics：PE-TTM / PB / ROE / 毛利率 / 总市值（fltt=2 原
   assert.equal(legacy.find((m) => m.metricKey === 'pe'), undefined);
 
   // 亏损股 PE 为负、字段为 "-"：一律跳过，不写 0
-  const loss = parseStockMetrics({ data: { f164: '-', f167: 1.2, f173: -3.5 } }, 'ins1', TODAY);
+  const loss = parseStockMetrics({ data: { f86: Date.parse(`${TODAY}T15:00:00+08:00`) / 1000, f164: '-', f167: 1.2, f173: -3.5 } }, 'ins1', TODAY);
   assert.equal(loss.find((m) => m.metricKey === 'pe'), undefined);
-  assert.equal(loss.find((m) => m.metricKey === 'roe'), undefined);
+  assert.equal(loss.find((m) => m.metricKey === 'roe')?.value, '-3.5');
   assert.equal(loss.find((m) => m.metricKey === 'pb')?.value, '1.2');
 });

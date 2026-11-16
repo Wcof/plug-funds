@@ -15,7 +15,9 @@ import type { DataQuality, MarketPoint } from '../../../core/src/types.ts';
 import type { ServiceContext } from '../context.ts';
 import { allTransactions } from '../repo/transactions.ts';
 import { listInstruments } from '../repo/instruments.ts';
-import { archiveIndexQuotePe, latestMetricDate, metricHistory, saveMarketPoints, saveValuationMetric } from '../repo/market.ts';
+import { archiveIndexQuotePe, latestMetricDate, metricHistory, officialIndexMetricProvider, saveMarketPoints, saveValuationMetric } from '../repo/market.ts';
+import { createCnindexProvider, type CnindexMetric } from '../market/cnindex.ts';
+import { saveCnindexMetrics } from './cnindex-valuation.ts';
 import { detectConflict, type QuoteCandidate } from '../market/conflict.ts';
 import { fetchCsindexIndicator, snapshotToMetrics, type CsindexMetric } from '../market/csindex.ts';
 import {
@@ -92,6 +94,7 @@ export async function refreshMarketData(
     (i) => !filter.instrumentIds || filter.instrumentIds.includes(i.id),
   );
   const results: RefreshItemResult[] = [];
+  const cnindex = createCnindexProvider(today);
 
   /**
    * 中证官方估值快照一轮只拉一次。
@@ -267,9 +270,25 @@ export async function refreshMarketData(
       }
     }
 
-    // 已有官方滚动 PE 时不再写报价端 pe（两者最多差 59%，混在一列会让分位静默跳变）；
-    // 官方未覆盖的指数（深证成指 / 创业板指）仍保留报价端 pe，否则会从「有值」变成「无值」。
-    const hasOfficialPe = officialPe || latestMetricDate(ctx.handle, instrument.id, 'pe', 'csindex') !== null;
+    // 国证自编目录补充官方滚动 PE / PB；已有中证主序列时不拼接来源。
+    // 未取得官方值的指标仍保留报价端值，并在展示层标注口径待核实。
+    if (cnindex.supports(instrument)) {
+      try {
+        const metrics = await cnindex.fetchMetrics!(instrument) as CnindexMetric[];
+        const accepted = saveCnindexMetrics(ctx.handle, instrument.id, metrics);
+        for (const metric of accepted) {
+          writtenMetricKeys.add(metric.metricKey);
+          currentMetrics.set(metric.metricKey, { value: metric.value, asOfDate: metric.asOfDate });
+        }
+        if (accepted.length) {
+          item.metrics += accepted.length;
+          item.providers.push('cnindex');
+          item.provider ??= 'cnindex';
+        }
+      } catch (error) { notes.push(`国证官方估值失败：${messageOf(error)}`); }
+    }
+    const hasOfficialPe = officialPe || officialIndexMetricProvider(ctx.handle, instrument.id, 'pe', today) !== null;
+    const hasOfficialPb = officialIndexMetricProvider(ctx.handle, instrument.id, 'pb', today) !== null;
     if (instrument.type === 'INDEX' && hasOfficialPe) archiveIndexQuotePe(ctx.handle, instrument.id);
 
     for (const provider of providers) {
@@ -305,10 +324,11 @@ export async function refreshMarketData(
         try {
           const metrics = await provider.fetchMetrics(instrument);
           for (const metric of metrics) {
-            // 指数的 PE 一律以中证官方滚动口径为准：报价端给指数的 PE 与官方差
-            // 1.2%–59.2%（实测科创50 91.23 vs 57.31），写进来会把分位序列带偏。
+            // 指数已有官方 PE / PB 时，报价独立留档；未证明同口径的来源不混入主序列。
             if (metric.asOfDate > today) continue;
-            const metricKey = instrument.type === 'INDEX' && metric.metricKey === 'pe' && hasOfficialPe ? 'pe_quote' : metric.metricKey;
+            const officialQuote = instrument.type === 'INDEX'
+              && ((metric.metricKey === 'pe' && hasOfficialPe) || (metric.metricKey === 'pb' && hasOfficialPb));
+            const metricKey = officialQuote ? `${metric.metricKey}_quote` : metric.metricKey;
             if (writtenMetricKeys.has(metricKey)) continue;
             saveValuationMetric(ctx.handle, {
               instrumentId: instrument.id,

@@ -6,7 +6,7 @@
  * - 最新点位来自 effectiveHistoryPoints() 并保留类型日期；YTD 需要上一年末有效基准，估算净值不参与。
  * - 估值指标来自 valuation_metrics 当前截面；历史均值 / 最小 / 20% / 50% / 80% / 最大来自 metricHistory()。
  * - 当前分位要求基础指标不超过 7 天、同源样本 ≥ 20 且跨度 ≥ 180 天；冲突或无效数据不产生分位。
- * - 场内|场外基金数未接入，恒为 null；总市值从报价 scale_info 原文读取，缺失不填 0。
+ * - 场内|场外基金数取官方关联目录，保留统计/观察日和分类状态；总市值从 scale_info 原文读取，缺失不填 0。
  * - 参考页的「加权 / 等权 / 算数 / 中位数」是成分股聚合口径，本项目数据源不含成分股，
  *   该选择仅作为口径标注返回，不改变数值；不得据此声称等价实现。
  */
@@ -14,6 +14,8 @@ import { percentile } from '../../../core/src/valuation.ts';
 import type { ServiceContext } from '../context.ts';
 import { effectiveHistoryPoints, latestValuationMetrics, metricHistory, type ValuationMetricRow } from '../repo/market.ts';
 import { listInstruments } from '../repo/instruments.ts';
+import { getIndexReference } from '../repo/index-reference.ts';
+import type { FundReference, ReferenceStatus } from '../market/index-reference.ts';
 
 export interface IndexMetricStats {
   current: number | null;
@@ -42,9 +44,11 @@ export interface IndexValuationRow {
   priceType: string | null;
   priceQuality: string | null;
   ytdReturn: number | null;
-  /** 场内 | 场外基金数：项目无此数据，恒 null。 */
+  /** 官方目录中可分类的场内 | 场外产品代码数；缺失或分类不完整为 null。 */
   fundOn: number | null;
   fundOff: number | null;
+  fundReference: FundReference | null;
+  fieldStates: Record<string, ReferenceStatus>;
   pe: IndexMetricStats;
   pb: IndexMetricStats;
   ps: IndexMetricStats;
@@ -188,6 +192,8 @@ export function getIndexValuation(ctx: ServiceContext, options: IndexValuationOp
       : null;
 
     const latestMetrics = latestValuationMetrics(ctx.handle, instrument.id, ctx.today);
+    const reference = getIndexReference(ctx.handle, instrument.id);
+    const funds = reference?.funds ?? null;
     const seriesFor = (key: string) => metricHistory(ctx.handle, instrument.id, key, since, ctx.today);
     const statFor = (key: string): IndexMetricStats => {
       const latest = latestMetrics.find((metric) => metric.metricKey === key);
@@ -204,6 +210,13 @@ export function getIndexValuation(ctx: ServiceContext, options: IndexValuationOp
     const pe = statFor('pe');
     const pb = statFor('pb');
     const ps = statFor('ps');
+    const metricStatus = (key: 'pe' | 'pb', stats: IndexMetricStats): ReferenceStatus => {
+      if (stats.current === null) return { state: 'MISSING', reason: key === 'pb' ? reference?.unavailable.pb ?? '尚未取得 PB' : '尚未取得 PE' };
+      if ((key === 'pe' && stats.current > 200) || (key === 'pb' && stats.current > 20)) return { state: 'SUSPECT', reason: `${key.toUpperCase()} 属极端值，保留原值并要求复核` };
+      if (key === 'pe' && !['csindex', 'cnindex', 'manual'].includes(stats.provider ?? '')) return { state: 'SUSPECT', reason: '报价端 PE 口径尚未证明与官方滚动 PE 相同' };
+      if (['STALE', 'SUSPECT', 'CONFLICT'].includes(stats.percentileStatus.state)) return stats.percentileStatus;
+      return { state: 'VALID', reason: null };
+    };
     const roe = recentRoe(metricHistory(ctx.handle, instrument.id, 'roe', undefined, ctx.today), ctx.today);
     const dividendSeries = seriesFor('dividend_yield');
     const dividendPoint = dividendSeries.at(-1);
@@ -234,8 +247,18 @@ export function getIndexValuation(ctx: ServiceContext, options: IndexValuationOp
       priceType: latestPoint?.priceType ?? null,
       priceQuality: latestPoint?.quality ?? null,
       ytdReturn,
-      fundOn: null,
-      fundOff: null,
+      fundOn: funds?.on ?? null,
+      fundOff: funds?.off ?? null,
+      fundReference: funds,
+      fieldStates: {
+        publishDate: reference?.publishStatus ?? { state: instrument.foundedDate ? 'SUSPECT' : 'MISSING', reason: '尚无本轮官方发布日期校验证据' },
+        fundOn: funds?.status ?? { state: 'MISSING', reason: reference?.unavailable.funds ?? '尚未取得官方关联产品清单' },
+        fundOff: funds?.status ?? { state: 'MISSING', reason: reference?.unavailable.funds ?? '尚未取得官方关联产品清单' },
+        pe: metricStatus('pe', pe),
+        pb: metricStatus('pb', pb),
+        ps: { state: ps.current === null ? 'MISSING' : 'SUSPECT', reason: reference?.unavailable.ps ?? 'PS 来源与聚合定义尚未核实' },
+        roe: { state: roe.every((v) => v === null) ? 'MISSING' : 'SUSPECT', reason: reference?.unavailable.roe ?? '对应财报年度和指数 ROE 聚合定义尚未核实' },
+      },
       pe, pb, ps, roe,
       dividendYield,
       dividendAsOfDate,
@@ -250,11 +273,11 @@ export function getIndexValuation(ctx: ServiceContext, options: IndexValuationOp
     count: rows.length,
     note: '数值全部取自本机 valuation_metrics / market_points（有效价格口径），缺数据为 null 并显示「—」。'
       + '最新点位保留日期与价格类型，盘中价不等同收盘价；今年收益以距上一年末不超过 14 天的有效收盘点为基准，缺基准不计算。'
-      + 'PE 有中证官方滚动序列时只用官方口径，其余保留各来源标签；不同口径不可直接比较。'
+      + 'PE 优先已有中证官方滚动序列，国证自编目录可提供国证官方 PE/PB；不同来源不拼接历史。'
       + 'PB 与股息率仅展示当前接入数据源已提供的值，未取得不代表发行方不公开。'
       + 'ROE 按前 3 / 2 / 1 个日历年的末次观测列示，不等同对应财报年度 ROE。'
       + `当前分位仅使用最新截面同来源的历史，基础指标超过 ${MAX_CURRENT_AGE_DAYS} 个自然日、存在冲突或无效数据、样本 < ${MIN_PERCENTILE_SAMPLES} 或跨度 < ${MIN_PERCENTILE_SPAN_DAYS} 天时不产生数值；保留历史描述统计、来源和日期。`
-      + '场内|场外基金数项目未存，恒为「—」；总市值取报价端「总市值 X 亿」。'
+      + '场内|场外计数仅为官方目录所列境内产品代码数；保留统计日期、观察日期与分类存疑状态，不等同全市场基金数。总市值取来源记录「总市值 X 亿」。'
       + '参考页的加权/等权/算数/中位数为成分股聚合口径，本项目数据源不含成分股，该选择仅作口径标注、不改变数值。',
     caliber: {
       market: String(options.market ?? '全部'),

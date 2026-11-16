@@ -170,35 +170,35 @@ export function saveValuationMetric(handle: DbHandle, row: Omit<ValuationMetricR
 }
 
 /** 首次接入官方滚动 PE 时隔离旧报价序列，不能把不同口径混入同一历史分位。 */
-export function archiveIndexQuotePe(handle: DbHandle, instrumentId: string): void {
+export function archiveIndexQuoteMetric(handle: DbHandle, instrumentId: string, key: 'pe' | 'pb'): void {
   handle.db.exec('SAVEPOINT archive_index_quote_pe;');
   try {
-    const incoming = handle.db.prepare("SELECT * FROM valuation_metrics WHERE instrument_id = ? AND metric_key = 'pe' AND provider <> 'csindex'").all(instrumentId) as ValRow[];
+    const incoming = handle.db.prepare("SELECT * FROM valuation_metrics WHERE instrument_id = ? AND metric_key = ? AND provider NOT IN ('csindex', 'cnindex', 'csindex-factsheet')").all(instrumentId, key) as ValRow[];
     const quoteCollisions = incoming.flatMap((row) => {
-      const existing = handle.db.prepare("SELECT * FROM valuation_metrics WHERE instrument_id = ? AND metric_key = 'pe_quote' AND as_of_date = ?").get(instrumentId, row.as_of_date) as ValRow | undefined;
+      const existing = handle.db.prepare("SELECT * FROM valuation_metrics WHERE instrument_id = ? AND metric_key = ? AND as_of_date = ?").get(instrumentId, `${key}_quote`, row.as_of_date) as ValRow | undefined;
       return existing && (existing.value !== row.value || existing.provider !== row.provider || existing.quality !== row.quality)
         ? [{ asOfDate: row.as_of_date, existing, incoming: row }] : [];
     });
     const migratedDates = new Set(incoming.map((row) => row.as_of_date));
     const removedDerivedPercentiles = (handle.db.prepare(`SELECT * FROM valuation_metrics
-      WHERE instrument_id = ? AND metric_key = 'pe_percentile' AND provider = 'derived'`).all(instrumentId) as ValRow[])
+      WHERE instrument_id = ? AND metric_key = ? AND provider = 'derived'`).all(instrumentId, `${key}_percentile`) as ValRow[])
       .filter((row) => migratedDates.has(row.as_of_date) || !handle.db.prepare(`SELECT 1 FROM valuation_metrics
-        WHERE instrument_id = ? AND metric_key = 'pe' AND as_of_date = ? AND provider = 'csindex'`).get(instrumentId, row.as_of_date));
+        WHERE instrument_id = ? AND metric_key = ? AND as_of_date = ? AND provider IN ('csindex', 'cnindex', 'csindex-factsheet')`).get(instrumentId, key, row.as_of_date));
     if (quoteCollisions.length > 0 || removedDerivedPercentiles.length > 0) {
-      const note = JSON.stringify({ kind: 'index-quote-pe-archive', instrumentId, quoteCollisions, removedDerivedPercentiles });
+      const note = JSON.stringify({ kind: `index-quote-${key}-archive`, instrumentId, quoteCollisions, removedDerivedPercentiles });
       const id = `quote-archive-${createHash('sha256').update(note).digest('hex')}`;
       const now = nowIso();
       handle.db.prepare('INSERT OR IGNORE INTO data_source_runs (id,started_at,finished_at,instruments,ok,failed,note) VALUES (?,?,?,?,?,?,?)')
         .run(id, now, now, 1, 1, 0, note);
     }
     handle.db.prepare(`INSERT INTO valuation_metrics (instrument_id, metric_key, value, as_of_date, provider, quality)
-      SELECT instrument_id, 'pe_quote', value, as_of_date, provider, quality FROM valuation_metrics
-      WHERE instrument_id = ? AND metric_key = 'pe' AND provider <> 'csindex'
-      ON CONFLICT (instrument_id, metric_key, as_of_date) DO NOTHING`).run(instrumentId);
-    handle.db.prepare("DELETE FROM valuation_metrics WHERE instrument_id = ? AND metric_key = 'pe' AND provider <> 'csindex'").run(instrumentId);
+      SELECT instrument_id, ?, value, as_of_date, provider, quality FROM valuation_metrics
+      WHERE instrument_id = ? AND metric_key = ? AND provider NOT IN ('csindex', 'cnindex', 'csindex-factsheet')
+      ON CONFLICT (instrument_id, metric_key, as_of_date) DO NOTHING`).run(`${key}_quote`, instrumentId, key);
+    handle.db.prepare("DELETE FROM valuation_metrics WHERE instrument_id = ? AND metric_key = ? AND provider NOT IN ('csindex', 'cnindex', 'csindex-factsheet')").run(instrumentId, key);
     for (const row of removedDerivedPercentiles) {
-      handle.db.prepare("DELETE FROM valuation_metrics WHERE instrument_id = ? AND metric_key = 'pe_percentile' AND provider = 'derived' AND as_of_date = ?")
-        .run(instrumentId, row.as_of_date);
+      handle.db.prepare("DELETE FROM valuation_metrics WHERE instrument_id = ? AND metric_key = ? AND provider = 'derived' AND as_of_date = ?")
+        .run(instrumentId, `${key}_percentile`, row.as_of_date);
     }
     handle.db.exec('RELEASE archive_index_quote_pe;');
   } catch (error) {
@@ -207,10 +207,16 @@ export function archiveIndexQuotePe(handle: DbHandle, instrumentId: string): voi
   }
 }
 
-function usesOfficialIndexPe(handle: DbHandle, instrumentId: string): boolean {
-  return Boolean(handle.db.prepare(`SELECT 1 FROM instruments i WHERE i.id = ? AND i.type = 'INDEX'
-    AND EXISTS (SELECT 1 FROM valuation_metrics p WHERE p.instrument_id = i.id AND p.metric_key = 'pe'
-      AND p.provider = 'csindex' AND p.value IS NOT NULL)`).get(instrumentId));
+export function archiveIndexQuotePe(handle: DbHandle, instrumentId: string): void {
+  archiveIndexQuoteMetric(handle, instrumentId, 'pe');
+}
+
+export function officialIndexMetricProvider(handle: DbHandle, instrumentId: string, key: string, through = shanghaiParts(new Date()).date): string | null {
+  const row = handle.db.prepare(`SELECT p.provider FROM valuation_metrics p JOIN instruments i ON i.id = p.instrument_id
+    WHERE i.id = ? AND i.type = 'INDEX' AND p.metric_key = ? AND p.value IS NOT NULL AND p.as_of_date <= ?
+    AND p.provider IN ('csindex', 'cnindex', 'csindex-factsheet')
+    ORDER BY CASE p.provider WHEN 'csindex' THEN 0 WHEN 'cnindex' THEN 1 ELSE 2 END, p.as_of_date DESC LIMIT 1`).get(instrumentId, key, through) as { provider: string } | undefined;
+  return row?.provider ?? null;
 }
 
 /**
@@ -262,7 +268,12 @@ export function metricHistory(
   const args: (string | number)[] = [instrumentId, metricKey];
   if (since) { clauses.push('as_of_date >= ?'); args.push(since); }
   if (until) { clauses.push('as_of_date <= ?'); args.push(until); }
-  if (metricKey === 'pe' && usesOfficialIndexPe(handle, instrumentId)) clauses.push("provider = 'csindex'");
+  if (metricKey === 'pe' || metricKey === 'pb') {
+    const official = officialIndexMetricProvider(handle, instrumentId, metricKey, until);
+    const latest = handle.db.prepare(`SELECT provider FROM valuation_metrics WHERE instrument_id = ? AND metric_key = ?
+      AND as_of_date <= ? ORDER BY as_of_date DESC LIMIT 1`).get(instrumentId, metricKey, until ?? shanghaiParts(new Date()).date) as { provider: string } | undefined;
+    if (official || latest) { clauses.push('provider = ?'); args.push(official ?? latest!.provider); }
+  }
   const rows = handle.db.prepare(
     `SELECT as_of_date, value FROM valuation_metrics WHERE ${clauses.join(' AND ')} ORDER BY as_of_date ASC`,
   ).all(...args) as { as_of_date: string; value: string }[];
@@ -304,9 +315,10 @@ export function latestValuationMetrics(handle: DbHandle, instrumentId: string, t
               ORDER BY metric_key, as_of_date`)
     .all(instrumentId, today) as ValRow[];
   const latest = new Map<string, ValRow>();
-  const officialPe = usesOfficialIndexPe(handle, instrumentId);
+  const officialSources = new Map(['pe', 'pb', 'pe_official_static'].map((key) => [key, officialIndexMetricProvider(handle, instrumentId, key, today)]));
   for (const row of rows) {
-    if (officialPe && row.metric_key === 'pe' && row.provider !== 'csindex') continue;
+    const official = officialSources.get(row.metric_key);
+    if (official && row.provider !== official) continue;
     latest.set(row.metric_key, row);
   }
   // 派生分位必须绑定当前基础指标的同日截面，旧报价遗留分位不能压过官方值。

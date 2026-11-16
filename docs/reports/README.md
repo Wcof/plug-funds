@@ -5,3 +5,4 @@
 原始接口响应、数据库备份和可重建日志留在对应 `.tmp/` 任务目录；正式报告保留来源地址、采集时间及 SHA-256 摘要。不得在此保存密钥、账户凭据或未经授权的持仓外发内容。
 
 - [2026-11-16 全量指数数据及 AI 调用审计](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-16-data-ai-review.md)
+- [2026-11-17 官方指数估值与参考资料补齐核验](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-17-index-data-review.md)

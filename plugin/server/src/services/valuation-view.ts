@@ -106,6 +106,7 @@ function caliberFor(instrument: Instrument, metrics: MetricLite[], pe: number | 
     const dividend = metrics.find((m) => m.key === 'dividend_yield');
     const peMetric = metrics.find((metric) => metric.key === 'pe');
     const source = peMetric?.provider === 'csindex' ? '中证官方滚动口径'
+      : peMetric?.provider === 'cnindex' ? '国证官方滚动口径'
       : peMetric?.provider === 'manual' ? '手工补录，口径待核实' : `报价口径（${peMetric?.provider ?? '来源未知'}），不可与官方滚动口径直接比较`;
     const parts = [`指数 PE ${pe === null ? '未获取' : `${source} · ${peMetric?.asOfDate ?? '日期未知'}`}`];
     if (staticPe) parts.push(`静态 PE ${staticPe.value}`);

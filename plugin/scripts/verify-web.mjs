@@ -210,6 +210,20 @@ async function browserChecks() {
     });
   }
   await rpcPost('save_manual_metric', { instrumentId: index.id, metricKey: 'pe', value: '13.44', asOfDate: weekdays[weekdays.length - 1] });
+  // 独立测试库中植入资料 fixture，覆盖真实浏览器的历史目录与月度单张提示。
+  const { DatabaseSync } = await import('node:sqlite');
+  const referenceDb = new DatabaseSync(path.join(stateDir, 'data', 'invest.db'));
+  try {
+    referenceDb.prepare('INSERT INTO app_settings (key,value_json,updated_at) VALUES (?,?,?)').run(`index_reference:${index.id}`, JSON.stringify({
+      code: index.code, provider: 'csindex', observedDate: '2026-11-16', publishDate: null,
+      publishStatus: { state: 'MISSING', reason: '浏览器测试 fixture' },
+      funds: { on: 4, off: 1, total: 5, unclassified: 0, excluded: 0, sourceDate: '2026-09-30', observedDate: '2026-11-16', provider: 'fixture',
+        status: { state: 'STALE', reason: '浏览器测试历史目录' }, note: '仅统计目录记录数' },
+      unavailable: { ps: 'fixture 缺 PS', roe: 'fixture 缺 ROE' }, evidence: [],
+    }), new Date().toISOString());
+    referenceDb.prepare('INSERT INTO valuation_metrics (instrument_id,metric_key,value,as_of_date,provider,quality) VALUES (?,?,?,?,?,?)')
+      .run(index.id, 'pb', '6.06', '2026-10-30', 'csindex-factsheet', 'STALE');
+  } finally { referenceDb.close(); }
 
   const chrome = spawn(CHROME, [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
@@ -503,6 +517,9 @@ async function browserChecks() {
         groups: [...t.querySelectorAll('.idx-group')].map(e => e.innerText.trim()),
         headers: t.querySelector('thead')?.innerText ?? '',
         price: [...t.querySelectorAll('tbody tr')].find(e => e.querySelector('td')?.innerText.trim() === '000300')?.querySelectorAll('td')[3]?.innerText ?? '',
+        funds: t.querySelector('tbody tr')?.querySelectorAll('td')[5]?.innerText ?? '',
+        pb: t.querySelector('tbody tr')?.querySelectorAll('td')[14]?.innerText ?? '',
+        pbTitle: t.querySelector('tbody tr')?.querySelectorAll('td')[14]?.title ?? '',
         sticky: getComputedStyle(t.querySelector('.idx-f2')).position,
         submenu: [...document.querySelectorAll('.idx-subitem')].length,
         ready: document.querySelector('.idx-ready')?.innerText.replace(/\\s+/g, ' ').slice(0, 100) ?? '',
@@ -517,6 +534,8 @@ async function browserChecks() {
         ['PE-TTM', 'PB', 'PS', 'ROE 年度观测'].every((g) => info.groups.includes(g)), JSON.stringify(info.groups));
       expect('点位列明确标为「最新点位」', info.headers.includes('最新点位') && !info.headers.includes('收盘点位'), info.headers);
       expect('最新点位保留手工价格类型与实际日期', info.price.includes('手工价格') && info.price.includes(weekdays[weekdays.length - 1]), info.price);
+      expect('基金数量明确显示历史目录', info.funds.includes('4|1') && info.funds.includes('历史目录'), info.funds);
+      expect('月度 PB 显示单张日期与陈旧状态', info.pb.includes('6.06') && info.pb.includes('2026-10-30') && info.pbTitle.includes('STALE'), info.pb);
       expect('左侧第二列 sticky 固定', info.sticky === 'sticky', String(info.sticky));
       expect('两行二级菜单已渲染', info.submenu >= 16, `count=${info.submenu}`);
       expect('结构预览行可见', info.bodyRows > 0, `rows=${info.bodyRows}`);
