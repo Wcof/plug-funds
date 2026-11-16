@@ -257,6 +257,33 @@ const MIGRATIONS: { version: number; sql: string }[] = [
       );
     `,
   },
+  {
+    /**
+     * v4：指标表改为「复合主键 + WITHOUT ROWID」。
+     *
+     * 原表有三个 B 树：id（TEXT uuid 主键）、UNIQUE(instrument_id, metric_key, as_of_date)、
+     * 以及行数据本身。`id` 只写不读，却占了 38.4 MB 索引；指标行又有 79 万（其中 pe 占 99.8%）。
+     * 实测（2026-11-16，真实库副本）：176.9 MB → 57.4 MB（-68%），读 52 万行 PE 历史 376 ms → 256 ms。
+     *
+     * 注意：迁移后旧插件（INSERT 带 id 列）写不进指标，必须与插件升级同步进行。
+     */
+    version: 4,
+    sql: `
+      CREATE TABLE valuation_metrics_v4 (
+        instrument_id TEXT NOT NULL REFERENCES instruments(id),
+        metric_key TEXT NOT NULL,
+        as_of_date TEXT NOT NULL,
+        value TEXT,
+        provider TEXT NOT NULL,
+        quality TEXT NOT NULL,
+        PRIMARY KEY (instrument_id, metric_key, as_of_date)
+      ) WITHOUT ROWID;
+      INSERT INTO valuation_metrics_v4 (instrument_id, metric_key, as_of_date, value, provider, quality)
+        SELECT instrument_id, metric_key, as_of_date, value, provider, quality FROM valuation_metrics;
+      DROP TABLE valuation_metrics;
+      ALTER TABLE valuation_metrics_v4 RENAME TO valuation_metrics;
+    `,
+  },
 ];
 
 function readSchemaVersion(db: DatabaseSync): number | null {

@@ -61,7 +61,7 @@ function pickBenchmark(ctx: ServiceContext): BenchmarkPick {
   const indices = listInstruments(ctx.handle, { type: 'INDEX', active: true });
   const candidates = indices
     .map((instrument) => {
-      const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type);
+      const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type, undefined, undefined, ctx.today);
       return { instrument, points };
     })
     .filter((entry) => entry.points.length >= MIN_COMMON_SAMPLES)
@@ -166,7 +166,7 @@ export function getCorrelationMatrix(ctx: ServiceContext, limit = 12): Correlati
     .slice(0, limit);
 
   const series = rows.map((row) => {
-    const points = effectiveHistoryPoints(ctx.handle, row.instrumentId, row.type);
+    const points = effectiveHistoryPoints(ctx.handle, row.instrumentId, row.type, undefined, undefined, ctx.today);
     const byDate = new Map<string, number>();
     for (const point of points) {
       const value = Number(point.value);

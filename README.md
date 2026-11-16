@@ -1,8 +1,10 @@
 # 个人投资工作站（plug-funds）· DeepSeek Harness 插件
 
-本地优先的个人投资工作站，以 **DeepSeek Harness（DSH / DeepSeekBox）插件**形态交付：账本、行情、估值观察、组合风险与 AI 分析，全部数据保存在本机，不上传云端，不连接券商，不自动交易。
+本地优先的个人投资工作站，以 **DeepSeek Harness（DSH / DeepSeekBox）插件**形态交付：账本、行情、估值观察、组合风险与 AI 分析。数据默认保存在本机；用户手动触发并确认 AI 外发范围后，所选持仓摘要会发送到配置的模型服务。项目不连接券商，不自动交易。
 
 产品口径与需求见 PRD v1.4（`/Users/ldh/Downloads/investment-workstation-prd-v1.1.md`，文件名保留 v1.1）；架构决策见 `docs/design/optimization-plan.md`。
+
+数据补齐、逐项校验与 AI 链路的规则和结果见 [2026-11-16 数据与 AI 校验报告](docs/reports/2026-11-16-data-ai-review.md)。
 
 ## 安装（DSH ≥ 0.2.1-rc.3）
 
@@ -12,10 +14,10 @@
 # 从源码构建 + 打包
 npm install
 npm run pack:dsh
-# 产物：integrations/dsh/dist/plug-funds-dsh-investment-0.1.3.tgz
+# 产物：integrations/dsh/dist/plug-funds-dsh-investment-0.1.4.tgz
 
 # 安装到 DSH（在 DSH 的插件安装入口 / plugin_manager 中执行）
-install_bundle target=/绝对路径/integrations/dsh/dist/plug-funds-dsh-investment-0.1.3.tgz
+install_bundle target=/绝对路径/integrations/dsh/dist/plug-funds-dsh-investment-0.1.4.tgz
 ```
 
 开发迭代用目录链接（改代码后重启 DSH 窗口即生效）：
@@ -34,33 +36,41 @@ remove_bundle target=@plug-funds/dsh-investment   # 卸载（不删用户数据�
 - **组合风险与配置**：集中度（单一持仓 / 前三大 / HHI / 有效持仓数 / 类别集中，缺价持仓不入分母）；现金账户（活期 / 货币基金 / 逆回购等，按类别汇总）；再平衡（类别目标权重 vs 实际权重，偏离超阈值才给 BUY / SELL，**未设目标时一律 HOLD**，避免把「没填」当成「目标为 0」而建议清仓）；持仓相关性矩阵（皮尔逊，样本 <20 为 null）；风险参数（无风险利率 / Beta / 跟踪误差 / 年化波动率 / ERP）。
 - **持仓**：三个子视图（当前持仓 / 交易流水 / 持仓估值）。单击标的进标的详情、双击进持仓详情；行内 AI 分析 + ⋯ 菜单（置顶 / 修改持仓 / 修改分组 / PK / 删除）；持仓估值视图不含收益列（夏普 / PE / PB / 股息率 / ROE / 波动率 / 回撤 / 策略结论）。
 - **持仓详情**：九项基础信息（含当日 / 昨日收益、已持天数）；三 Tab 折线图（关联板块 / 业绩走势 / 我的收益＝累计收益金额）+ 成本线 / 保本线 + 买卖红绿标记 + 对比指数（默认沪深300）+ 周期筛选联动列表。
-- **估值**：内置 4 模板 + 自定义模板，可编辑、每次保存生成不可变版本、可回滚；规则评分 0–100（规则匹配度，非涨跌概率）；必需指标缺失 → 数据不足；支持手工补录估值指标并标注 MANUAL；刷新时按近 3 年截面计算 PE / PB 历史分位（样本 <20 不写）。**列表覆盖全部标的**（`scope=all`：股票 / ETF / 场外基金 / 指数，含无持仓的观察标的，持仓优先排序并标「持仓」），按资产类别筛选 + 「仅持仓」开关；缺指标的行保留并显示「数据不足」，不因没有持仓而消失。
+- **估值**：内置 4 模板 + 自定义模板，可编辑、每次保存生成不可变版本、可回滚；规则评分 0–100（规则匹配度，非涨跌概率）；必需指标缺失 → 数据不足；支持手工补录估值指标并标注 MANUAL；PE / PB 历史分位以对应基础指标的日期为终点回看 3 年，须同时满足至少 20 个有效样本与 180 天跨度，不随刷新日期漂移。分位或基础指标过期、存在冲突或日期不一致时，该分位不参与当前评分。**列表覆盖全部标的**（`scope=all`：股票 / ETF / 场外基金 / 指数，含无持仓的观察标的，持仓优先排序并标「持仓」），按资产类别筛选 + 「仅持仓」开关；缺指标的行保留并显示「数据不足」，不因没有持仓而消失。
 - **账本与数据**：交易流水唯一事实源、`requestId` 幂等；**CSV 与 Excel（.xlsx）流水导入**（预览 / 错误行可见 / 单事务提交 / 失败整批回滚；xlsx 在自包含约束下自解析 ZIP + XML，不引第三方库，并正确还原日期序列号、稀疏列、富文本与实体）；JSON 全量备份恢复（schema 校验 / 恢复前自动备份当前库 / 外键与回放一致性 / 失败回滚）；组合外部资金流水驱动 XIRR；每日组合与持仓快照、数据源运行记录。
-- **指数**：参考 `touzid.com/indice/#/6` 复刻「指数列表」——两行二级菜单、筛选工具条、双层分组表头、36 列高密度表格、左侧两列 sticky、排序 / 行选中 / 关注星标 / 导出 / 指标定义弹窗、桌面响应式；二级菜单 **16 项全部可切换**：列表 / 指标自定义 / ETF / 财务对比 / 历史涨跌幅 / 相关性 / RPS / 波动率 / 新高 / 新低 / 图形对比 / 定投 / 格雷厄姆 / 股债性价比 + **互联互通与两融**（数据源未覆盖时显示「需要什么数据」而非填 0）。数值一律取自本机 `valuation_metrics` / `market_points`（有效价格口径），分位点样本 <20 显示「—」；**不复制第三方真实行情**。首次打开指数页时自动执行 `bootstrap_indices`：建 8 个常用宽基指数标的（只写代码 / 名称 / 数据源映射）并立刻从腾讯 / 东财拉一次真实行情与估值，避免「装了插件却满屏 —」；拉不到就按标的显示失败原因，不填 0。本机确实无 `type=INDEX` 标的数据时仍启用「结构预览」，数值列全部为「—」并显式标注。
+- **指数**：参考 `touzid.com/indice/#/6` 复刻「指数列表」-- 两行二级菜单、筛选工具条、双层分组表头、36 列高密度表格、左侧两列 sticky、排序 / 行选中 / 关注星标 / 导出 / 指标定义弹窗、桌面响应式；二级菜单 **16 项全部可切换**：列表 / 指标自定义 / ETF / 财务对比 / 历史涨跌幅 / 相关性 / RPS / 波动率 / 新高 / 新低 / 图形对比 / 定投 / 格雷厄姆 / 股债性价比 + **互联互通与两融**（数据源未覆盖时显示「需要什么数据」而非填 0）。数值一律取自本机 `valuation_metrics` / `market_points`（有效价格口径）；列表分位按选定年限回看至对应基础指标的日期，有效样本少于 20 个或跨度不足 180 天时显示「—」；**不复制第三方真实行情**。首次打开指数页时自动执行 `bootstrap_indices`：建 8 个常用宽基指数标的（只写代码 / 名称 / 数据源映射）并立刻从腾讯 / 东财拉一次真实行情与估值，避免「装了插件却满屏 —」；拉不到就按标的显示失败原因，不填 0。本机确实无 `type=INDEX` 标的数据时仍启用「结构预览」，数值列全部为「—」并显式标注。**指数标的可按目录批量导入**：`npm run import:indices -- --apply` 从公开目录建 000（中证/上证）与 399（深证/国证）系列；表格默认每页 50 行（可切 100/200/500），避免 500+ 行 × 36 列一次渲染卡顿。「市值」列取自报价端「总市值 X 亿」原文解析；「发布时间」取已接入的中证官网端点，抓取受阻时明确记录原因，缺失项可用 `npm run fill:dates` 续补。
 - **设置**：分类管理（名称 + 颜色、括号计数、直接改名、删除）；AI 配置（Base URL / Key / 模型，OpenAI 兼容，手动触发，**Key 存系统钥匙串**）；行情自动刷新（默认 60 秒、可关闭、可配间隔、仅交易时段开关）；交易日历与当前时段展示；JSON / CSV 导出与备份恢复；隐藏金额。
-- **行情**：**腾讯财经为主源**（`qt.gtimg.cn` 实时 / `web.ifzq.gtimg.cn` K 线，覆盖 A 股 / ETF / 指数 / 港股 / 美股 / 场外基金最新净值）+ **东财兜底**（`push2` 报价与 K 线、`f10/lsjz` 场外基金历史净值、`pingzhongdata` 全量净值、`f10` 估值明细）+ **中证指数官网官方估值**（`indicator.xls`：PE1 总股本 / PE2 计算用股本 / 股息率1 / 股息率2，20 个交易日截面）+ 手工价格；有效价格统一口径 `MANUAL_PRICE > 当日 REALTIME > CLOSE / OFFICIAL_NAV`，同日多来源去重；**多源交叉校验**：同一标的同一天两个来源相对差 >1% 时标记 `CONFLICT` 并保留双方记录，不擅自选一个当正确答案；正式净值与盘中估算严格分离，估算不参与计价。
-- **估值指标口径**：个股 `pe`（PE-TTM）/ `pb` / `roe` / 毛利率 / 净利率 取东财 `push2`（f164 / f167 / f173 / f187 / f188），腾讯 `pe` / `pb` 作交叉校验；指数 `pe` 取报价端、`pe_official`（PE2）与 `pe_official_total_share`（PE1）取中证官网，**三种口径分开存**（实测同一指数差 2%–19%，混用会让分位跳变），`dividend_yield` 只有中证官网提供；深证成指 / 创业板指由国证发布，中证文件不存在 → 如实标注「数据源未覆盖」，不拿别的指数顶替。核查命令：`node plugin/scripts/audit-metrics.mjs`（腾讯 / 东财 / 中证三源并列 + 偏差判定）。
+- **行情**：**腾讯财经为主源**（`qt.gtimg.cn` 实时 / `web.ifzq.gtimg.cn` K 线，覆盖 A 股 / ETF / 指数 / 港股 / 美股 / 场外基金最新净值）+ **东财兜底**（`push2` 报价与 K 线、`f10/lsjz` 场外基金历史净值、`pingzhongdata` 全量净值、`f10` 估值明细）+ **中证指数官网官方估值**（已接入 JSON 快照中的静态 PE / 滚动 PE / **PB** / 股息率，以及逐日滚动 PE 历史；覆盖因指数和字段而异，部分历史可回溯到 2011 年；`indicator.xls` 作为补充，403 等抓取失败单独记录）+ 手工价格；有效价格统一口径 `MANUAL_PRICE > 当日 REALTIME > CLOSE / OFFICIAL_NAV`，同日多来源去重；**多源交叉校验**：同一标的、同一交易日、同一价格类型的两个来源相对差 >1% 时标记 `CONFLICT` 并保留双方记录，不擅自选一个当正确答案；正式净值与盘中估算严格分离，估算不参与计价。
+- **估值指标口径**：个股 `pe`（PE-TTM）/ `pb` 优先取腾讯报价，东财 `push2` 补充 `pe` / `pb` / `roe` / 毛利率 / 净利率（f164 / f167 / f173 / f187 / f188），可比数据用于交叉校验。已确认取得中证官方滚动 PE 的指数以该口径作为 `pe`，报价端数值保留在 `pe_quote`；静态 PE 用 `pe_official_static`，PE1 / PE2 用各自独立键。已接入的中证端点可提供部分指数的 `pb` 与 `dividend_yield`，不表示官方其他渠道或其他来源没有数据。深证成指、创业板指等若未从已接入端点取得相应字段，按实际返回区分「端点未覆盖」「抓取失败」或「待核实」，不借用其他指数数值。不同日期、股本口径或计算方法的差异不能直接认定为数值错误；无法确认可比性的报价与官方值并列留证，不混入同一历史分位序列。核查命令：`node plugin/scripts/audit-metrics.mjs`（腾讯 / 东财 / 中证来源并列与偏差记录）。
 - **MCP（Zcode 等 MCP 宿主）**：同一套 server 层以 MCP 工具形式暴露（`mcp/index.js` + `mcp/manifest.json`，stdio + 换行分隔 JSON-RPC 2.0，17 个工具），不复制业务逻辑、不产生第二份数据。
 
 ## 数据与隐私
 
-- 数据根：`~/.plug-funds/`（`data/invest.db` 为 SQLite，WAL；`PLUG_FUNDS_STATE_DIR` 可隔离）；当前 `SCHEMA_VERSION = 3`（迁移前自动备份，高版本库拒绝打开）。
+- 数据根：`~/.plug-funds/`（`data/invest.db` 为 SQLite，WAL；`PLUG_FUNDS_STATE_DIR` 可隔离）；当前 `SCHEMA_VERSION = 4`（迁移前自动备份，高版本库拒绝打开）；v4 把 `valuation_metrics` 改为复合主键 + WITHOUT ROWID（去掉只写不读的 uuid 主键），指标表占用 176.9 MB → 57.4 MB。
 - 交易流水是唯一事实源，持仓为回放投影；金额 i64 定点（金额 2 位、份额净值 4 位、ROUND_DOWN）。
 - **交易日历**：优先用本机指数日线（`000300` 优先）反推真实交易日，周末恒休市；区间内「工作日但无行情」判为休市并计入推导出的节假日；样本 <20 天或尚无指数日线时退回「工作日即交易日」并显式标注 `weekday`（节假日可能误判）。时间一律按 UTC+8 计算，不依赖宿主时区。
 - **AI Key**：优先写 macOS 钥匙串（`security`）/ Linux `secret-tool`；SQLite 只保留哨兵值 `__keychain__`，不落明文。钥匙串不可用时显式降级到 SQLite 并通过 `secretBackend` 如实上报，启动时自动把老库明文迁移到钥匙串。
+- **AI 分析**：先保存配置并测试连接，首次分析前确认接收地址、模型和发送范围。摘要含所选持仓、账户内权重的分母、有效价格区间及可用估值的日期/来源/质量，空值保持缺失。仅完整文本响应写入本地记录；配置变化需重新测试和确认。当前能力是持仓文本分析，不包含图片或截图 OCR 识别。
+- **数据校验**：日期或口径不一致的指标只并列留证，不直接判错；指数已取得的官方滚动 PE 与报价值分键留档。用于评分的 PE / PB 分位以基础指标日期为终点回看 3 年，须同时满足至少 20 个有效样本、180 天跨度，且与基础指标同日。超过 7 个自然日的分位，或质量为 `STALE` / `CONFLICT` / `MISSING`、与基础指标错期的派生值，不用于当前评分。指数列表展示最新有效点位及类型、日期，实时报价不会标为收盘价。
 - 卸载插件不删除 `~/.plug-funds/` 数据。
 
 ## 开发
 
 ```bash
 npm install
-npm test          # 162 个测试（core 单测 + API 集成 + 行情 fixture + 日历 + xlsx + 钥匙串 + MCP + 指数分析）
+npm test          # core / API / 行情 / AI / 指数分析与审计回归
 npm run build     # 构建宿主 bundle + web SPA + MCP 入口 → plugin/targets/dsh/investment/
 npm run check     # 构建产物自包含校验 + web 产物静态断言 + 全部测试
 node plugin/scripts/smoke.mjs   # E2E 冒烟：mock cordis ctx + 真实 HTTP 全链路（21 项）
 npm run pack:dsh  # 构建 + 打包 tarball → integrations/dsh/dist/
-npm run verify:install  # 解包 tarball + 静态契约（含 SPA 挂载 / 指数页 / MCP）+ 隔离 HTTP/RPC（41 项）
-npm run verify:web      # web 产物静态断言 + 真实 Chrome CDP 渲染验证（69 项 = 静态 29 + 浏览器 40）
+npm run verify:install  # 解包 tarball + 静态契约（含 SPA 挂载 / 指数页 / MCP）+ 隔离 HTTP/RPC（45 项）
+npm run verify:web      # web 静态断言 + 真实 Chrome CDP 渲染与 AI 交互验证
+npm run backfill:metrics # 中证官方估值回填（默认只体检；--apply 落库，写前先备份）
+npm run audit:metrics   # 估值指标多源核查（库内 / 腾讯 / 东财 / 中证官方并列对比）
+npm run audit:indices   # active INDEX 全字段 JSON/CSV 审计（缺失、来源、口径冲突、修正记录）
+npm run import:indices  # 导入沪深指数目录（000/399，默认 dry-run）
+npm run import:indices -- --apply # 确认写入目录标识，不写行情数值
+npm run refresh:indices # 批量刷新全部指数（分批调用同一刷新链路）
 node plugin/scripts/verify-web.mjs           # 只跑静态层（无需 Chrome，适合 CI）
 ```
 

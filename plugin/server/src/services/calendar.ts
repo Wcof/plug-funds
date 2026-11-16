@@ -25,7 +25,7 @@ function pickSourceInstrument(ctx: ServiceContext): { id: string; code: string; 
   if (preferred) return { id: preferred.id, code: preferred.code, name: preferred.name };
   let best: { id: string; code: string; name: string; count: number } | null = null;
   for (const index of indices) {
-    const count = effectiveHistoryPoints(ctx.handle, index.id, index.type).length;
+    const count = effectiveHistoryPoints(ctx.handle, index.id, index.type, undefined, undefined, ctx.today).length;
     if (!best || count > best.count) best = { id: index.id, code: index.code, name: index.name, count };
   }
   return best ? { id: best.id, code: best.code, name: best.name } : null;
@@ -35,7 +35,7 @@ export function buildTradingCalendar(ctx: ServiceContext): TradingCalendar {
   const instrument = pickSourceInstrument(ctx);
   if (!instrument) return WEEKDAY_CALENDAR;
 
-  const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type);
+  const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type, undefined, undefined, ctx.today);
   const dates = [...new Set(points.map((p) => p.tradingDate).filter((d) => !isWeekend(d)))].sort();
   // 缓存签名：日期数 + 首尾日期，避免每次判定都重算整段区间。
   const signature = `${instrument.id}:${dates.length}:${dates[0] ?? ''}:${dates[dates.length - 1] ?? ''}`;

@@ -36,7 +36,7 @@ import { listHoldings, setPinned } from './services/holdings.ts';
 import { getDashboardSummary, getDashboardAllocation, getPerformance, type RangeKey } from './services/dashboard.ts';
 import { getInstrumentChartSeries, type ChartPeriod, type ChartTab } from './services/charts.ts';
 import { getHoldingsValuation } from './services/valuation-view.ts';
-import { analyzeHolding, getAiStatus, testAiConnection, updateAiSettings } from './services/ai.ts';
+import { AiServiceError, analyzeHolding, getAiStatus, testAiConnection, updateAiSettings } from './services/ai.ts';
 import { exportBackup, exportHoldingsCsv } from './services/backup.ts';
 import { refreshMarketData } from './services/refresh.ts';
 import { getIndexValuation } from './services/index-valuation.ts';
@@ -100,7 +100,7 @@ function getPositionDetail(ctx: ServiceContext, positionId: string) {
   if (!instrument) throw new NotFoundError(`instrument not found: ${holding.instrumentId}`);
 
   // 当日 / 昨日收益：与 effectivePrice 同口径的有效价格序列（PRD §6.2）
-  const points = effectiveHistoryPoints(ctx.handle, holding.instrumentId, instrument.type);
+  const points = effectiveHistoryPoints(ctx.handle, holding.instrumentId, instrument.type, undefined, undefined, ctx.today);
   const qtyRaw = parseFixed(holding.qty, SCALE_QTY);
   const current = points.length > 0 ? parseFixed(points[points.length - 1].value, SCALE_QTY) : null;
   const prev = points.length >= 2 ? parseFixed(points[points.length - 2].value, SCALE_QTY) : null;
@@ -350,7 +350,8 @@ const HANDLERS: Record<string, (ctx: ServiceContext, params: Record<string, unkn
     // 估值页要「全部标的」；总览 / 持仓页保持只出持仓的原有口径。
     scope: params.scope === 'all' ? 'all' : 'holdings',
   }),
-  analyze_holding_with_ai: async (ctx, params) => analyzeHolding(ctx, str(params.positionId)),
+  analyze_holding_with_ai: async (ctx, params) => analyzeHolding(ctx, str(params.positionId), params.consent === true,
+    typeof params.consentToken === 'string' ? params.consentToken : undefined),
   get_ai_settings: (ctx) => getAiStatus(ctx),
   save_ai_settings: (ctx, params) => updateAiSettings(ctx, {
     baseUrl: typeof params.baseUrl === 'string' ? params.baseUrl : undefined,
@@ -534,6 +535,9 @@ export async function dispatch(
     }
     return { status: 200, envelope: ok(traceId, payload) };
   } catch (error) {
+    if (error instanceof AiServiceError) {
+      return { status: error.status, envelope: fail(traceId, error.code, error.message) };
+    }
     if (error instanceof LedgerError) {
       return { status: 422, envelope: fail(traceId, error.code, error.message, error.detail) };
     }

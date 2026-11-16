@@ -60,7 +60,7 @@ function prevTradingPrice(
   instrument: Instrument,
   currentDate: string,
 ): { date: string; valueRaw: number } | null {
-  const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type);
+  const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type, undefined, undefined, ctx.today);
   const earlier = points.filter((p) => p.tradingDate < currentDate);
   const prev = earlier[earlier.length - 1];
   return prev ? { date: prev.tradingDate, valueRaw: parseFixed(prev.value, SCALE_QTY) } : null;
@@ -264,7 +264,7 @@ export function getPerformance(ctx: ServiceContext, range: RangeKey, custom?: { 
   for (const row of holdings.rows) {
     const instrument = instruments.get(row.instrumentId);
     if (!instrument) continue;
-    const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type, span.begin, span.end);
+    const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type, span.begin, span.end, ctx.today);
     const series = points.map((p) => ({ date: p.tradingDate, raw: parseFixed(p.value, SCALE_QTY) }));
     histories.set(row.instrumentId, series);
     for (const p of points) dateSet.add(p.tradingDate);

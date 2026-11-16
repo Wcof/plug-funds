@@ -1,5 +1,5 @@
 /** SPA 页面：总览 / 持仓 / 估值 / 设置 / 持仓详情 / 标的详情。 */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   rpc, type AllocationResult, type AppInfo, type CashFlow, type ChartSeriesResult, type DashboardSummary,
   type Goal, type HoldingRow, type HoldingsResult, type Instrument, type PerformanceMetrics,
@@ -1010,6 +1010,8 @@ export function SettingsPage(props: { reloadKey: number; onReload: () => void; o
   const [aiBaseUrl, setAiBaseUrl] = useState('');
   const [aiKey, setAiKey] = useState('');
   const [aiModel, setAiModel] = useState('');
+  const [aiBusy, setAiBusy] = useState<'save' | 'test' | null>(null);
+  const aiPending = useRef(false);
   const [restoreOpen, setRestoreOpen] = useState(false);
   const [refresh, setRefresh] = useState<RefreshSettingsState | null>(null);
   const [refreshInterval, setRefreshInterval] = useState('60');
@@ -1031,7 +1033,30 @@ export function SettingsPage(props: { reloadKey: number; onReload: () => void; o
     setRefreshInterval(String(refreshResult.settings.intervalSec));
   }, []);
 
-  useEffect(() => { void load(); }, [load, props.reloadKey]);
+  useEffect(() => { void load().catch((error) => props.onToast((error as Error).message)); }, [load, props.reloadKey]);
+
+  const saveAi = async (testConnection: boolean) => {
+    if (aiPending.current) return;
+    aiPending.current = true;
+    setAiBusy(testConnection ? 'test' : 'save');
+    try {
+      const saved = await rpc<AiStatus>('save_ai_settings', { baseUrl: aiBaseUrl, apiKey: aiKey === ai?.masked.apiKey ? undefined : aiKey, model: aiModel });
+      setAi(saved);
+      setAiBaseUrl(saved.masked.baseUrl);
+      setAiModel(saved.masked.model);
+      setAiKey(saved.masked.apiKey);
+      if (testConnection) {
+        const result = await rpc<{ ok: boolean; message: string }>('test_ai_connection');
+        setAi(await rpc<AiStatus>('get_ai_settings'));
+        props.onToast(result.message);
+      } else props.onToast('AI 配置已保存；配置变更后需重新测试连接');
+    } catch (error) {
+      props.onToast((error as Error).message);
+    } finally {
+      aiPending.current = false;
+      setAiBusy(null);
+    }
+  };
 
   return (
     <div>
@@ -1195,29 +1220,21 @@ export function SettingsPage(props: { reloadKey: number; onReload: () => void; o
         <>
           <div className="card">
             <h2>AI 配置</h2>
-            <div className="set-hint">兼容 OpenAI 接口格式（/v1/chat/completions）。API Key 存于{ai?.secretBackend === 'keychain' ? '系统钥匙串' : '本机 SQLite（系统钥匙串不可用，已如实降级）'}（不写入日志、不随备份导出）；AI 分析仅在点击「AI 分析」时<b>手动触发</b>。当前状态：{ai?.configured ? <span className="badge t-nav">已配置</span> : <span className="badge t-wait">未配置</span>}</div>
+            <div className="set-hint">兼容 OpenAI 接口格式（Base URL 后追加 /chat/completions）。API Key 存于{ai?.secretBackend === 'keychain' ? '系统钥匙串' : '本机 SQLite（系统钥匙串不可用，已如实降级）'}（不写入日志、不随备份导出）；AI 分析仅在点击「AI 分析」时<b>手动触发</b>。测试连接只发送固定连通探针。当前状态：{ai?.configured ? <span className={`badge ${ai.connectionTested ? 't-nav' : 't-wait'}`}>{ai.connectionTested ? '已配置，连接已验证' : '已配置，待测试'}</span> : <span className="badge t-wait">未配置</span>}</div>
             <div className="form-grid">
               <Field label="Base URL">
-                <input type="text" value={aiBaseUrl} placeholder="https://api.deepseek.com/v1" onChange={(e) => setAiBaseUrl(e.target.value)} />
+                <input type="text" disabled={aiBusy !== null} value={aiBaseUrl} placeholder="https://api.deepseek.com/v1" onChange={(e) => setAiBaseUrl(e.target.value)} />
               </Field>
               <Field label="模型">
-                <input type="text" value={aiModel} placeholder="deepseek-chat" onChange={(e) => setAiModel(e.target.value)} />
+                <input type="text" disabled={aiBusy !== null} value={aiModel} placeholder="deepseek-chat" onChange={(e) => setAiModel(e.target.value)} />
               </Field>
             </div>
             <Field label="API Key">
-              <input type="text" value={aiKey} placeholder={ai?.masked.apiKey || 'sk-…（输入新值即覆盖）'} onChange={(e) => setAiKey(e.target.value)} />
+              <input type="password" autoComplete="new-password" disabled={aiBusy !== null} value={aiKey} placeholder={ai?.masked.apiKey || 'sk-…（输入新值即覆盖）'} onChange={(e) => setAiKey(e.target.value)} />
             </Field>
             <div style={{ display: 'flex', gap: 9, marginTop: 6 }}>
-              <button className="btn" onClick={async () => {
-                await rpc('save_ai_settings', { baseUrl: aiBaseUrl, apiKey: aiKey === ai?.masked.apiKey ? undefined : aiKey, model: aiModel });
-                const result = await rpc<{ ok: boolean; message: string }>('test_ai_connection');
-                props.onToast(result.message);
-              }}>测试连接</button>
-              <button className="btn btn-primary" onClick={async () => {
-                await rpc('save_ai_settings', { baseUrl: aiBaseUrl, apiKey: aiKey === ai?.masked.apiKey ? undefined : aiKey, model: aiModel });
-                void load();
-                props.onToast('AI 配置已保存');
-              }}>保存配置</button>
+              <button className="btn" disabled={aiBusy !== null} onClick={() => void saveAi(true)}>{aiBusy === 'test' ? '正在测试…' : '测试连接'}</button>
+              <button className="btn btn-primary" disabled={aiBusy !== null} onClick={() => void saveAi(false)}>{aiBusy === 'save' ? '正在保存…' : '保存配置'}</button>
             </div>
           </div>
           <div className="card">

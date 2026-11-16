@@ -1,0 +1,743 @@
+{
+  "startedAt": "2026-11-16T11:18:01.118Z",
+  "purpose": "Independent original XLS evidence for eight JSON snapshot indexes; no database writes",
+  "entries": [
+    {
+      "id": "78c1702e-7d2d-479c-b472-c1edbb610e36",
+      "code": "000001",
+      "name": "上证指数",
+      "url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/indicator/000001indicator.xls",
+      "requestedAt": "2026-11-16T11:18:01.128Z",
+      "date": "2026-11-16",
+      "jsonDividendYield": 2.53,
+      "databaseBeforeRequest": [
+        {
+          "metric_key": "dividend_yield",
+          "value": "2.54",
+          "provider": "csindex",
+          "quality": "FRESH"
+        },
+        {
+          "metric_key": "dividend_yield_total_share",
+          "value": "2.53",
+          "provider": "csindex",
+          "quality": "FRESH"
+        }
+      ],
+      "status": 200,
+      "headers": {
+        "accept-ranges": "bytes",
+        "connection": "keep-alive",
+        "content-length": "8192",
+        "content-md5": "9qKHVWC2aHu8AtA7/K/iNQ==",
+        "content-type": "application/vnd.ms-excel",
+        "date": "Mon, 16 Nov 2026 11:18:04 GMT",
+        "etag": "\"F6A2875560B6687BBC02D03BFCAFE235\"",
+        "last-modified": "Mon, 16 Nov 2026 10:55:42 GMT",
+        "x-oss-hash-crc64ecma": "15960549838306266717",
+        "x-oss-object-type": "Normal",
+        "x-oss-request-id": "6AFAE66C76B4443430FBA33A",
+        "x-oss-server-time": "1",
+        "x-oss-storage-class": "Standard"
+      },
+      "receivedAt": "2026-11-16T11:18:04.390Z",
+      "bytes": 8192,
+      "sha256": "b14432ad9aea658686e53bf49e52b29c93831b3a84533bed5460ca9f97be15b6",
+      "file": "000001.xls",
+      "headersFromWorkbook": [
+        {
+          "row": 0,
+          "col": 0,
+          "value": "日期Date"
+        },
+        {
+          "row": 0,
+          "col": 6,
+          "value": "市盈率1（总股本）P/E1"
+        },
+        {
+          "row": 0,
+          "col": 7,
+          "value": "市盈率2（计算用股本）P/E2"
+        },
+        {
+          "row": 0,
+          "col": 8,
+          "value": "股息率1（总股本）D/P1"
+        },
+        {
+          "row": 0,
+          "col": 9,
+          "value": "股息率2（计算用股本）D/P2"
+        }
+      ],
+      "rows": 20,
+      "latest": {
+        "tradeDate": "2026-11-16",
+        "code": "000001",
+        "name": "上证指数",
+        "peTotalShare": 15.54,
+        "peCalcShare": 15.52,
+        "dividendTotalShare": 2.53,
+        "dividendCalcShare": 2.54
+      },
+      "sameDate": {
+        "tradeDate": "2026-11-16",
+        "code": "000001",
+        "name": "上证指数",
+        "peTotalShare": 15.54,
+        "peCalcShare": 15.52,
+        "dividendTotalShare": 2.53,
+        "dividendCalcShare": 2.54
+      },
+      "jsonMatchesTotalShare": true,
+      "calcShareMatchesStoredMain": true,
+      "calcShareMatchesStoredIndependent": false
+    },
+    {
+      "id": "5afbde03-4fc5-4c67-9f9b-b3729f921dff",
+      "code": "000010",
+      "name": "上证180",
+      "url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/indicator/000010indicator.xls",
+      "requestedAt": "2026-11-16T11:18:05.018Z",
+      "date": "2026-11-16",
+      "jsonDividendYield": 3.34,
+      "databaseBeforeRequest": [
+        {
+          "metric_key": "dividend_yield",
+          "value": "2.71",
+          "provider": "csindex",
+          "quality": "FRESH"
+        },
+        {
+          "metric_key": "dividend_yield_total_share",
+          "value": "3.34",
+          "provider": "csindex",
+          "quality": "FRESH"
+        }
+      ],
+      "status": 200,
+      "headers": {
+        "accept-ranges": "bytes",
+        "connection": "keep-alive",
+        "content-length": "8192",
+        "content-md5": "l8eBWnqIyZrDLEtLr+t7uw==",
+        "content-type": "application/vnd.ms-excel",
+        "date": "Mon, 16 Nov 2026 11:18:05 GMT",
+        "etag": "\"97C7815A7A88C99AC32C4B4BAFEB7BBB\"",
+        "last-modified": "Mon, 16 Nov 2026 10:55:25 GMT",
+        "x-oss-hash-crc64ecma": "4953315181380487179",
+        "x-oss-object-type": "Normal",
+        "x-oss-request-id": "6AFAE66D40F8A23237117C2E",
+        "x-oss-server-time": "1",
+        "x-oss-storage-class": "Standard"
+      },
+      "receivedAt": "2026-11-16T11:18:05.089Z",
+      "bytes": 8192,
+      "sha256": "a4cb62b6bbe196aec592cff48ec862c05a551e4b273f07ef2d6bcaa1cff06c87",
+      "file": "000010.xls",
+      "headersFromWorkbook": [
+        {
+          "row": 0,
+          "col": 0,
+          "value": "日期Date"
+        },
+        {
+          "row": 0,
+          "col": 6,
+          "value": "市盈率1（总股本）P/E1"
+        },
+        {
+          "row": 0,
+          "col": 7,
+          "value": "市盈率2（计算用股本）P/E2"
+        },
+        {
+          "row": 0,
+          "col": 8,
+          "value": "股息率1（总股本）D/P1"
+        },
+        {
+          "row": 0,
+          "col": 9,
+          "value": "股息率2（计算用股本）D/P2"
+        }
+      ],
+      "rows": 20,
+      "latest": {
+        "tradeDate": "2026-11-16",
+        "code": "000010",
+        "name": "上证180",
+        "peTotalShare": 12.34,
+        "peCalcShare": 15.04,
+        "dividendTotalShare": 3.34,
+        "dividendCalcShare": 2.71
+      },
+      "sameDate": {
+        "tradeDate": "2026-11-16",
+        "code": "000010",
+        "name": "上证180",
+        "peTotalShare": 12.34,
+        "peCalcShare": 15.04,
+        "dividendTotalShare": 3.34,
+        "dividendCalcShare": 2.71
+      },
+      "jsonMatchesTotalShare": true,
+      "calcShareMatchesStoredMain": true,
+      "calcShareMatchesStoredIndependent": false
+    },
+    {
+      "id": "debed4dc-ebe1-4e01-802d-59a2fd383bf8",
+      "code": "000016",
+      "name": "上证50",
+      "url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/indicator/000016indicator.xls",
+      "requestedAt": "2026-11-16T11:18:05.693Z",
+      "date": "2026-11-16",
+      "jsonDividendYield": 3.58,
+      "databaseBeforeRequest": [
+        {
+          "metric_key": "dividend_yield",
+          "value": "3.06",
+          "provider": "csindex",
+          "quality": "FRESH"
+        },
+        {
+          "metric_key": "dividend_yield_total_share",
+          "value": "3.58",
+          "provider": "csindex",
+          "quality": "FRESH"
+        }
+      ],
+      "status": 200,
+      "headers": {
+        "accept-ranges": "bytes",
+        "connection": "keep-alive",
+        "content-length": "8192",
+        "content-md5": "DCJ/rul1gM31yXHauH0wnA==",
+        "content-type": "application/vnd.ms-excel",
+        "date": "Mon, 16 Nov 2026 11:18:05 GMT",
+        "etag": "\"0C227FAEE97580CDF5C971DAB87D309C\"",
+        "last-modified": "Mon, 16 Nov 2026 10:55:44 GMT",
+        "x-oss-hash-crc64ecma": "17341468041215122468",
+        "x-oss-object-type": "Normal",
+        "x-oss-request-id": "6AFAE66D3B8FEF373841C332",
+        "x-oss-server-time": "2",
+        "x-oss-storage-class": "Standard"
+      },
+      "receivedAt": "2026-11-16T11:18:05.749Z",
+      "bytes": 8192,
+      "sha256": "c6d0a5ab802889573bc8aa4a92c439fb1a83271e20c74d054e1c6cb8e1d74fcf",
+      "file": "000016.xls",
+      "headersFromWorkbook": [
+        {
+          "row": 0,
+          "col": 0,
+          "value": "日期Date"
+        },
+        {
+          "row": 0,
+          "col": 6,
+          "value": "市盈率1（总股本）P/E1"
+        },
+        {
+          "row": 0,
+          "col": 7,
+          "value": "市盈率2（计算用股本）P/E2"
+        },
+        {
+          "row": 0,
+          "col": 8,
+          "value": "股息率1（总股本）D/P1"
+        },
+        {
+          "row": 0,
+          "col": 9,
+          "value": "股息率2（计算用股本）D/P2"
+        }
+      ],
+      "rows": 20,
+      "latest": {
+        "tradeDate": "2026-11-16",
+        "code": "000016",
+        "name": "上证50",
+        "peTotalShare": 12.16,
+        "peCalcShare": 13.55,
+        "dividendTotalShare": 3.58,
+        "dividendCalcShare": 3.06
+      },
+      "sameDate": {
+        "tradeDate": "2026-11-16",
+        "code": "000016",
+        "name": "上证50",
+        "peTotalShare": 12.16,
+        "peCalcShare": 13.55,
+        "dividendTotalShare": 3.58,
+        "dividendCalcShare": 3.06
+      },
+      "jsonMatchesTotalShare": true,
+      "calcShareMatchesStoredMain": true,
+      "calcShareMatchesStoredIndependent": false
+    },
+    {
+      "id": "c9cd75cb-fd29-4834-a901-f25167b6f6ec",
+      "code": "000300",
+      "name": "沪深300",
+      "url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/indicator/000300indicator.xls",
+      "requestedAt": "2026-11-16T11:18:06.353Z",
+      "date": "2026-11-16",
+      "jsonDividendYield": 3.05,
+      "databaseBeforeRequest": [
+        {
+          "metric_key": "dividend_yield",
+          "value": "2.73",
+          "provider": "csindex",
+          "quality": "FRESH"
+        },
+        {
+          "metric_key": "dividend_yield_total_share",
+          "value": "3.05",
+          "provider": "csindex",
+          "quality": "FRESH"
+        }
+      ],
+      "status": 200,
+      "headers": {
+        "accept-ranges": "bytes",
+        "connection": "keep-alive",
+        "content-length": "8192",
+        "content-md5": "un92026V/y10fDNiwTkKNA==",
+        "content-type": "application/vnd.ms-excel",
+        "date": "Mon, 16 Nov 2026 11:18:10 GMT",
+        "etag": "\"BA7F76D36E95FF2D747C3362C1390A34\"",
+        "last-modified": "Mon, 16 Nov 2026 10:54:50 GMT",
+        "x-oss-hash-crc64ecma": "12320110098269350035",
+        "x-oss-object-type": "Normal",
+        "x-oss-request-id": "6AFAE66F80E2CA3638140C13",
+        "x-oss-server-time": "1",
+        "x-oss-storage-class": "Standard"
+      },
+      "receivedAt": "2026-11-16T11:18:10.481Z",
+      "bytes": 8192,
+      "sha256": "2f922294a88a457026d0105b04e3e33161bfbece24cc644f3c6bfbe20c609ce1",
+      "file": "000300.xls",
+      "headersFromWorkbook": [
+        {
+          "row": 0,
+          "col": 0,
+          "value": "日期Date"
+        },
+        {
+          "row": 0,
+          "col": 6,
+          "value": "市盈率1（总股本）P/E1"
+        },
+        {
+          "row": 0,
+          "col": 7,
+          "value": "市盈率2（计算用股本）P/E2"
+        },
+        {
+          "row": 0,
+          "col": 8,
+          "value": "股息率1（总股本）D/P1"
+        },
+        {
+          "row": 0,
+          "col": 9,
+          "value": "股息率2（计算用股本）D/P2"
+        }
+      ],
+      "rows": 20,
+      "latest": {
+        "tradeDate": "2026-11-16",
+        "code": "000300",
+        "name": "沪深300",
+        "peTotalShare": 13.74,
+        "peCalcShare": 14.97,
+        "dividendTotalShare": 3.05,
+        "dividendCalcShare": 2.73
+      },
+      "sameDate": {
+        "tradeDate": "2026-11-16",
+        "code": "000300",
+        "name": "沪深300",
+        "peTotalShare": 13.74,
+        "peCalcShare": 14.97,
+        "dividendTotalShare": 3.05,
+        "dividendCalcShare": 2.73
+      },
+      "jsonMatchesTotalShare": true,
+      "calcShareMatchesStoredMain": true,
+      "calcShareMatchesStoredIndependent": false
+    },
+    {
+      "id": "98d2afa1-02c7-4624-892c-d19430d1b4c1",
+      "code": "000009",
+      "name": "上证380",
+      "url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/indicator/000009indicator.xls",
+      "requestedAt": "2026-11-16T11:18:11.088Z",
+      "date": "2026-11-16",
+      "jsonDividendYield": 1.98,
+      "databaseBeforeRequest": [
+        {
+          "metric_key": "dividend_yield",
+          "value": "1.82",
+          "provider": "csindex",
+          "quality": "FRESH"
+        },
+        {
+          "metric_key": "dividend_yield_total_share",
+          "value": "1.98",
+          "provider": "csindex",
+          "quality": "FRESH"
+        }
+      ],
+      "status": 200,
+      "headers": {
+        "accept-ranges": "bytes",
+        "connection": "keep-alive",
+        "content-length": "8192",
+        "content-md5": "paDLVnMNP8JTROym1CiiWQ==",
+        "content-type": "application/vnd.ms-excel",
+        "date": "Mon, 16 Nov 2026 11:18:11 GMT",
+        "etag": "\"A5A0CB56730D3FC25344ECA6D428A259\"",
+        "last-modified": "Mon, 16 Nov 2026 10:54:58 GMT",
+        "x-oss-hash-crc64ecma": "17003824499736639143",
+        "x-oss-object-type": "Normal",
+        "x-oss-request-id": "6AFAE673A14DC5313161B7E3",
+        "x-oss-server-time": "1",
+        "x-oss-storage-class": "Standard"
+      },
+      "receivedAt": "2026-11-16T11:18:11.348Z",
+      "bytes": 8192,
+      "sha256": "693b0cc1ad2bc261b93d035ffb3ceec91d07a5b7955b9405d53f04e5bd80931b",
+      "file": "000009.xls",
+      "headersFromWorkbook": [
+        {
+          "row": 0,
+          "col": 0,
+          "value": "日期Date"
+        },
+        {
+          "row": 0,
+          "col": 6,
+          "value": "市盈率1（总股本）P/E1"
+        },
+        {
+          "row": 0,
+          "col": 7,
+          "value": "市盈率2（计算用股本）P/E2"
+        },
+        {
+          "row": 0,
+          "col": 8,
+          "value": "股息率1（总股本）D/P1"
+        },
+        {
+          "row": 0,
+          "col": 9,
+          "value": "股息率2（计算用股本）D/P2"
+        }
+      ],
+      "rows": 20,
+      "latest": {
+        "tradeDate": "2026-11-16",
+        "code": "000009",
+        "name": "上证380",
+        "peTotalShare": 21.01,
+        "peCalcShare": 21.77,
+        "dividendTotalShare": 1.98,
+        "dividendCalcShare": 1.82
+      },
+      "sameDate": {
+        "tradeDate": "2026-11-16",
+        "code": "000009",
+        "name": "上证380",
+        "peTotalShare": 21.01,
+        "peCalcShare": 21.77,
+        "dividendTotalShare": 1.98,
+        "dividendCalcShare": 1.82
+      },
+      "jsonMatchesTotalShare": true,
+      "calcShareMatchesStoredMain": true,
+      "calcShareMatchesStoredIndependent": false
+    },
+    {
+      "id": "64018f1c-39e1-4399-8a48-f59ce6ec2dcd",
+      "code": "000015",
+      "name": "红利指数",
+      "url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/indicator/000015indicator.xls",
+      "requestedAt": "2026-11-16T11:18:11.957Z",
+      "date": "2026-11-16",
+      "jsonDividendYield": 4.45,
+      "databaseBeforeRequest": [
+        {
+          "metric_key": "dividend_yield",
+          "value": "4.1",
+          "provider": "csindex",
+          "quality": "FRESH"
+        },
+        {
+          "metric_key": "dividend_yield_total_share",
+          "value": "4.45",
+          "provider": "csindex",
+          "quality": "FRESH"
+        }
+      ],
+      "status": 200,
+      "headers": {
+        "accept-ranges": "bytes",
+        "connection": "keep-alive",
+        "content-length": "8192",
+        "content-md5": "2WMwWTbyBsK8TRUa7J4wOQ==",
+        "content-type": "application/vnd.ms-excel",
+        "date": "Mon, 16 Nov 2026 11:18:12 GMT",
+        "etag": "\"D963305936F206C2BC4D151AEC9E3039\"",
+        "last-modified": "Mon, 16 Nov 2026 10:55:03 GMT",
+        "x-oss-hash-crc64ecma": "349403769546623740",
+        "x-oss-object-type": "Normal",
+        "x-oss-request-id": "6AFAE674A14DC53337BBB8E3",
+        "x-oss-server-time": "1",
+        "x-oss-storage-class": "Standard"
+      },
+      "receivedAt": "2026-11-16T11:18:12.225Z",
+      "bytes": 8192,
+      "sha256": "a05f111ada248fad142fd385ca5857d9f1150a3c9e9ee30638e7f8f589bc1510",
+      "file": "000015.xls",
+      "headersFromWorkbook": [
+        {
+          "row": 0,
+          "col": 0,
+          "value": "日期Date"
+        },
+        {
+          "row": 0,
+          "col": 6,
+          "value": "市盈率1（总股本）P/E1"
+        },
+        {
+          "row": 0,
+          "col": 7,
+          "value": "市盈率2（计算用股本）P/E2"
+        },
+        {
+          "row": 0,
+          "col": 8,
+          "value": "股息率1（总股本）D/P1"
+        },
+        {
+          "row": 0,
+          "col": 9,
+          "value": "股息率2（计算用股本）D/P2"
+        }
+      ],
+      "rows": 20,
+      "latest": {
+        "tradeDate": "2026-11-16",
+        "code": "000015",
+        "name": "红利指数",
+        "peTotalShare": 9.87,
+        "peCalcShare": 10.93,
+        "dividendTotalShare": 4.45,
+        "dividendCalcShare": 4.1
+      },
+      "sameDate": {
+        "tradeDate": "2026-11-16",
+        "code": "000015",
+        "name": "红利指数",
+        "peTotalShare": 9.87,
+        "peCalcShare": 10.93,
+        "dividendTotalShare": 4.45,
+        "dividendCalcShare": 4.1
+      },
+      "jsonMatchesTotalShare": true,
+      "calcShareMatchesStoredMain": true,
+      "calcShareMatchesStoredIndependent": false
+    },
+    {
+      "id": "e5c7f335-23ed-47e7-a4ee-c264f577f165",
+      "code": "000922",
+      "name": "中证红利",
+      "url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/indicator/000922indicator.xls",
+      "requestedAt": "2026-11-16T11:18:12.834Z",
+      "date": "2026-11-16",
+      "jsonDividendYield": 4.49,
+      "databaseBeforeRequest": [
+        {
+          "metric_key": "dividend_yield",
+          "value": "4.23",
+          "provider": "csindex",
+          "quality": "FRESH"
+        },
+        {
+          "metric_key": "dividend_yield_total_share",
+          "value": "4.49",
+          "provider": "csindex",
+          "quality": "FRESH"
+        }
+      ],
+      "status": 200,
+      "headers": {
+        "accept-ranges": "bytes",
+        "connection": "keep-alive",
+        "content-length": "8192",
+        "content-md5": "EfvX18Fuk6C8wOvElViD8Q==",
+        "content-type": "application/vnd.ms-excel",
+        "date": "Mon, 16 Nov 2026 11:18:13 GMT",
+        "etag": "\"11FBD7D7C16E93A0BCC0EBC4955883F1\"",
+        "last-modified": "Mon, 16 Nov 2026 10:55:24 GMT",
+        "x-oss-hash-crc64ecma": "5798021856089380880",
+        "x-oss-object-type": "Normal",
+        "x-oss-request-id": "6AFAE674BBA0C4353097CBC5",
+        "x-oss-server-time": "1",
+        "x-oss-storage-class": "Standard"
+      },
+      "receivedAt": "2026-11-16T11:18:13.102Z",
+      "bytes": 8192,
+      "sha256": "3c4ce5c679ac60b90f2ee01cb363ea065b9a00c5f7d998f13715741c9c1ff0f4",
+      "file": "000922.xls",
+      "headersFromWorkbook": [
+        {
+          "row": 0,
+          "col": 0,
+          "value": "日期Date"
+        },
+        {
+          "row": 0,
+          "col": 6,
+          "value": "市盈率1（总股本）P/E1"
+        },
+        {
+          "row": 0,
+          "col": 7,
+          "value": "市盈率2（计算用股本）P/E2"
+        },
+        {
+          "row": 0,
+          "col": 8,
+          "value": "股息率1（总股本）D/P1"
+        },
+        {
+          "row": 0,
+          "col": 9,
+          "value": "股息率2（计算用股本）D/P2"
+        }
+      ],
+      "rows": 20,
+      "latest": {
+        "tradeDate": "2026-11-16",
+        "code": "000922",
+        "name": "中证红利",
+        "peTotalShare": 9.45,
+        "peCalcShare": 10.99,
+        "dividendTotalShare": 4.49,
+        "dividendCalcShare": 4.23
+      },
+      "sameDate": {
+        "tradeDate": "2026-11-16",
+        "code": "000922",
+        "name": "中证红利",
+        "peTotalShare": 9.45,
+        "peCalcShare": 10.99,
+        "dividendTotalShare": 4.49,
+        "dividendCalcShare": 4.23
+      },
+      "jsonMatchesTotalShare": true,
+      "calcShareMatchesStoredMain": true,
+      "calcShareMatchesStoredIndependent": false
+    },
+    {
+      "id": "f7d56dc2-c96e-4616-a39d-da1b98bbb68d",
+      "code": "000905",
+      "name": "中证500",
+      "url": "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/file/autofile/indicator/000905indicator.xls",
+      "requestedAt": "2026-11-16T11:18:13.708Z",
+      "date": "2026-11-16",
+      "jsonDividendYield": 1.67,
+      "databaseBeforeRequest": [
+        {
+          "metric_key": "dividend_yield",
+          "value": "1.51",
+          "provider": "csindex",
+          "quality": "FRESH"
+        },
+        {
+          "metric_key": "dividend_yield_total_share",
+          "value": "1.67",
+          "provider": "csindex",
+          "quality": "FRESH"
+        }
+      ],
+      "status": 200,
+      "headers": {
+        "accept-ranges": "bytes",
+        "connection": "keep-alive",
+        "content-length": "8192",
+        "content-md5": "+XSOGVRBBcQ78V4cb6SZdg==",
+        "content-type": "application/vnd.ms-excel",
+        "date": "Mon, 16 Nov 2026 11:18:13 GMT",
+        "etag": "\"F9748E19544105C43BF15E1C6FA49976\"",
+        "last-modified": "Mon, 16 Nov 2026 10:55:37 GMT",
+        "x-oss-hash-crc64ecma": "16561980491784778591",
+        "x-oss-object-type": "Normal",
+        "x-oss-request-id": "6AFAE67513C7C538375E7D8B",
+        "x-oss-server-time": "1",
+        "x-oss-storage-class": "Standard"
+      },
+      "receivedAt": "2026-11-16T11:18:13.778Z",
+      "bytes": 8192,
+      "sha256": "64ec4aa32b798ca2991ceedbfe046d92548578a1df34741fd8c52386bbda9d72",
+      "file": "000905.xls",
+      "headersFromWorkbook": [
+        {
+          "row": 0,
+          "col": 0,
+          "value": "日期Date"
+        },
+        {
+          "row": 0,
+          "col": 6,
+          "value": "市盈率1（总股本）P/E1"
+        },
+        {
+          "row": 0,
+          "col": 7,
+          "value": "市盈率2（计算用股本）P/E2"
+        },
+        {
+          "row": 0,
+          "col": 8,
+          "value": "股息率1（总股本）D/P1"
+        },
+        {
+          "row": 0,
+          "col": 9,
+          "value": "股息率2（计算用股本）D/P2"
+        }
+      ],
+      "rows": 20,
+      "latest": {
+        "tradeDate": "2026-11-16",
+        "code": "000905",
+        "name": "中证500",
+        "peTotalShare": 24.58,
+        "peCalcShare": 26.01,
+        "dividendTotalShare": 1.67,
+        "dividendCalcShare": 1.51
+      },
+      "sameDate": {
+        "tradeDate": "2026-11-16",
+        "code": "000905",
+        "name": "中证500",
+        "peTotalShare": 24.58,
+        "peCalcShare": 26.01,
+        "dividendTotalShare": 1.67,
+        "dividendCalcShare": 1.51
+      },
+      "jsonMatchesTotalShare": true,
+      "calcShareMatchesStoredMain": true,
+      "calcShareMatchesStoredIndependent": false
+    }
+  ],
+  "finishedAt": "2026-11-16T11:18:14.385Z"
+}

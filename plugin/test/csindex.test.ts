@@ -56,7 +56,8 @@ test('csindex：官方 PE 走独立键，不顶替报价端口径的 pe', () => 
   assert.ok(!keys.has('pe'), '不得写入 pe：官方口径与腾讯 / 东财 TTM 不同，混用会让分位跳变');
   assert.ok(keys.has('pe_official'));
   assert.ok(keys.has('pe_official_total_share'));
-  assert.ok(keys.has('dividend_yield'), '股息率只有官方源提供，应作为主值');
+  assert.ok(keys.has('dividend_yield_calc_share'), '计算用股本股息率必须独立留档');
+  assert.ok(!keys.has('dividend_yield'), 'XLS 不能直接抢占 JSON 主股息率键');
   // 历史截面逐日写入，供分位累积
   assert.equal(history.length, snapshots.length * 4);
   assert.equal(history.filter((row) => row.metricKey === 'pe_official').length, 20);

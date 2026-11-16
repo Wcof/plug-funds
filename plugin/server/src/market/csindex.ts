@@ -13,7 +13,8 @@
  * - **不覆盖报价端口径的 `pe`**：中证 PE2（计算用股本）与腾讯 / 东财的 TTM 实测差 2%–19%，
  *   直接顶替会让历史分位与横向比较静默跳变。官方值单独落 `pe_official`（PE2）与
  *   `pe_official_total_share`（PE1），由核查脚本并列展示；
- * - `dividend_yield` 是唯一能拿到的真实来源（报价端不提供），作为主值写入；
+ * - 股息率2独立写 `dividend_yield_calc_share`，股息率1写 `dividend_yield_total_share`；
+ *   是否作为主股息率由刷新层按 JSON 覆盖判断，不能把不同股本口径混写；
  * - 只覆盖中证 / 上证系列；深证成指、创业板指等国证系列返回 404 → 空数组，
  *   由上层如实标注「数据源未覆盖」，不得用别的指数代替；
  * - 文件是 20 个交易日的滚动窗口：每天可取，但想要长周期分位必须逐日累积，
@@ -202,7 +203,7 @@ export interface CsindexSnapshot {
   peCalcShare: number | null;
   /** 股息率1（总股本口径，%）。 */
   dividendTotalShare: number | null;
-  /** 股息率2（计算用股本口径，主值，%）。 */
+  /** 股息率2（计算用股本口径，%），与 JSON 快照 dp 保持独立。 */
   dividendCalcShare: number | null;
 }
 
@@ -335,8 +336,8 @@ export function snapshotToMetrics(instrumentId: string, snapshots: CsindexSnapsh
     // 官方 PE 走独立键，绝不顶替报价端 pe（两者口径不同，混用会让分位跳变）
     if (snapshot.peCalcShare !== null) history.push({ instrumentId, metricKey: 'pe_official', value: String(snapshot.peCalcShare), asOfDate, quality });
     if (snapshot.peTotalShare !== null) history.push({ instrumentId, metricKey: 'pe_official_total_share', value: String(snapshot.peTotalShare), asOfDate, quality });
-    // 股息率只有官方源提供，作为主值
-    if (snapshot.dividendCalcShare !== null) history.push({ instrumentId, metricKey: 'dividend_yield', value: String(snapshot.dividendCalcShare), asOfDate, quality });
+    // 两种股本口径分别留档；不能与 JSON 快照 dp 抢占主股息率键。
+    if (snapshot.dividendCalcShare !== null) history.push({ instrumentId, metricKey: 'dividend_yield_calc_share', value: String(snapshot.dividendCalcShare), asOfDate, quality });
     if (snapshot.dividendTotalShare !== null) history.push({ instrumentId, metricKey: 'dividend_yield_total_share', value: String(snapshot.dividendTotalShare), asOfDate, quality });
   }
   const newest = snapshots[0].tradeDate;

@@ -39,6 +39,8 @@ plugin/
 │  ├─ market/tencent.ts   # 主源：qt.gtimg.cn 实时 / web.ifzq.gtimg.cn K 线（覆盖 A/ETF/指数/港/美/场外基金）
 │  ├─ market/eastmoney.ts # 兜底：push2 报价与 K 线、f10/lsjz 与 pingzhongdata 场外基金净值、估值明细
 │  ├─ market/provider.ts  # Provider 注册表（resolveAll 多源有序尝试）
+│  ├─ market/csindex.ts   # 中证官网 OSS xls（PE1/PE2/股息率，OLE2 自解析；本机常被 WAF 403）
+│  ├─ market/csindex-valuation.ts # 中证官网 JSON：PB / 静态PE / 滚动PE 快照 + 逐日滚动PE 全量历史
 │  ├─ market/conflict.ts  # 多源交叉校验：相对差 >1% 标 CONFLICT，保留双方记录
 │  ├─ market/manual.ts    # 手工价格兜底（MANUAL_PRICE 标记）
 │  ├─ xlsx.ts             # 自包含 .xlsx 解析（node:zlib + 手写 ZIP/XML），输出 CSV 复用导入链路
@@ -81,7 +83,7 @@ v2 新增（15，migration v2，修复轮补齐）：`export_holdings_csv`、`sa
 
 决策支持（1，无 schema 变更）：`get_decision_readiness`——把「数据是否足以支撑资产决策」拆成 9 个维度（持仓与成本 14 / 价格与市值 18 / 组合估值 11 / 外部资金流 9 / 收益与风险 13 / 投资目标 7 / 集中度 10 / 市场估值坐标 7 / 现金与流动性 11），返回 OK / PARTIAL / MISSING、现状数字、补齐动作、加权 0–100 分与结论，并附集中度（Top1 / Top3 / HHI / 有效持仓数）。缺数据不按 0 处理；分数只描述信息完备度。
 
-指数页（2，无 schema 变更）：`get_index_valuation`——只聚合本机 `type=INDEX` 标的，收盘点位 / 今年收益率走 `effectiveHistoryPoints()`，估值分位走 `latestValuationMetrics()` + `metricHistory()`（样本 <20 为 null）；返回 `note` 与 `caliber` 供前端标注口径。不新增外部数据源、不复制第三方行情数值。`seed_common_indices`——按需创建常见 INDEX 标的（只写标的元数据，不写任何伪造行情）。
+指数页（2，无 schema 变更）：`get_index_valuation` 只聚合本机 `type=INDEX` 标的，最新点位及其类型 / 今年收益率走 `effectiveHistoryPoints()`，估值分位按基础指标日期锚定同源历史（至少 20 个有效样本、180 天跨度；过期、冲突、缺失或错期时不可用于当前评分）；返回 `note` 与 `caliber` 供前端标注口径。页面只读取本机数据，不复制参考网站行情数值。`seed_common_indices` 按需创建常见 INDEX 标的（只写标的元数据，不写任何伪造行情）。
 
 指数分析（1，无 schema 变更）：`get_index_analytics`——一次算完全部二级视图所需数据（阶段涨跌幅、波动率、60 日新高/新低、RPS、相关性矩阵、定投回测与 XIRR、格雷厄姆与股债性价比、ETF 与覆盖率），返回 `note` 与 `coverage` 供前端标注口径。
 
@@ -101,9 +103,11 @@ v2 新增（15，migration v2，修复轮补齐）：`export_holdings_csv`、`sa
 | §4.11 Key 入 Keychain | **已实现**：macOS 走 `security add-generic-password -U`、Linux 走 `secret-tool`；SQLite 只留哨兵 `__keychain__`；不可用时显式降级并在 `secretBackend` 上报 | 插件运行在 Node 宿主可直接调系统命令；降级路径必须可见，不静默假装加密 |
 | §13.1 CSV/Excel 导入 | **均已实现**：CSV 文本 + **.xlsx 二进制**（自解析 ZIP/XML，不引第三方库；日期序列号、稀疏列、富文本、实体均正确处理）；预览 / 错误行 / `requestId` 幂等 / 单事务 / 整批回滚 | 自包含约束下用 `node:zlib` + 手写 ZIP/XML 解析，xlsx 先转 CSV 再复用同一条导入链路；`.xls` 老格式明确拒绝并提示另存为 |
 | §4.5 实时刷新定时器 | Host `effect` 生命周期托管（默认 60s、可关闭、可配间隔 15–3600s、仅交易时段开关、`unref()`） | 语义保留；**已接入真实交易日历**（指数日线反推，周末恒休市，样本 <20 天退回工作日并标 `assumed`），不再「只按周一到周五」 |
-| §4.6.7 策略模板完整引擎 | v1 只读模板；v2 补齐可编辑、不可变版本、回滚、自定义模板、手工指标、PE/PB 历史分位 | 每次保存生成新版本而非覆盖；样本 <20 不写分位，覆盖率 <80% 不产生数值 |
+| §4.6.7 策略模板完整引擎 | v1 只读模板；v2 补齐可编辑、不可变版本、回滚、自定义模板、手工指标、PE/PB 历史分位 | 每次保存生成新版本而非覆盖；分位需满足样本、跨度、同源、日期和质量守卫，覆盖率 <80% 不产生数值 |
 | 组合风险（PRD 外，用户新增需求） | **已补齐**：集中度、现金账户、再平衡建议、相关性矩阵、Beta / 跟踪误差 / 年化波动 / ERP；再平衡仅建议不下单，未设目标时全 HOLD | 这些维度需要用户输入（风险偏好、无风险利率）与本地序列；缺数据一律 null / MISSING，不用估算值伪造精度 |
 | 指数页（PRD 外，用户新增需求，参考 `touzid.com/indice/#/6`） | 结构 / 样式 / 交互复刻；**16 项二级菜单全部可切换**（14 个真实视图 + 2 个数据源未覆盖时显式说明）；数值来自本机，无 INDEX 标的时为「结构预览」（数值列恒为「—」） | 不复制第三方真实行情、不伪造数值；互联互通 / 两融数据源未覆盖时写明「需要什么数据」而非填 0；成分股聚合口径仅作标注 |
 | 行情数据源（PRD §5.2） | 腾讯为主源、东财兜底、手工价格保底；同标的同日相对差 >1% 标 `CONFLICT` 保留双方 | 本机实测东财 `push2`/`push2his` HTTP 000、腾讯可用；多源交叉校验比单源更早暴露字段漂移 |
 | 盘中估算净值（PRD §4.5.1） | `fundgz` 端点**已下线**（恒返回 404 HTML），估算链路当前不可用；解析失败返回 `null`，不写任何猜测值 | 正式净值与估算严格分离；宁可不显示，也不伪造估值 |
 | Zcode / MCP 适配 | **已实现 MCP server 形态**（stdio JSON-RPC、17 工具、`mcp/manifest.json`），供 ZCode 等 MCP **客户端**消费；未做 `zcode-dsh`（Cordis 适配器，未实测） | 方向修正为「本 core 提供 MCP server，由 MCP 客户端消费」；同一套 server 层复用，不复制业务逻辑、不产生第二份数据 |
+| 指数估值数据源（PRD §4.6 / 用户新增） | 优先中证官网 **JSON**：`data-service/indexValuation`（静态 PE / 滚动 PE / PB / 股息率快照）+ `perf/indexCsiDsPe`（逐日滚动 PE 历史），XLS 补充。已取得官方滚动值的指数以其作为 `pe`，报价端另存 `pe_quote`；JSON 股息率与 XLS 两种股本口径分键留档 | 已接入快照仅覆盖 8 只指数，其余字段按实际响应区分未覆盖、抓取失败和待核实，不代表全网无数据。跨日期或未经证明同口径的值标为不可比，不以差异百分比直接认定错误；缺口不推算、不借用其他指数 |
+| 收盘价写入时机 | 只有会话阶段为 `after`（≥15:00）或 `closed-day` 才写当日 `CLOSE_PRICE`；盘中与午休只保留 `REALTIME_PRICE` | K 线接口盘中会返回当日未完成 bar，直接入库等于用 11:30 的快照冒充当日收盘价，污染历史序列（`dropUnsettledClose()`） |

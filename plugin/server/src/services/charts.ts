@@ -103,7 +103,7 @@ export async function getInstrumentChartSeries(
   const unitCostRaw = pos && pos.qtyRaw > 0 ? pos.unitCostRaw : null;
   const qtyRaw = pos && pos.qtyRaw > 0 ? pos.qtyRaw : null;
 
-  const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type, span.begin, span.end);
+  const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type, span.begin, span.end, ctx.today);
   // 「我的收益」Tab 画的是累计收益金额（0 = 保本线），不是价格 / 净值曲线。
   const minePoints = input.tab === 'mine' && unitCostRaw !== null && qtyRaw !== null
     ? myProfitSeries(ctx, instrument.id, span)
@@ -207,7 +207,7 @@ export function myProfitSeries(
   const positions = replayPositions(txns);
   const pos = [...positions.values()].find((p) => p.instrumentId === instrumentId && p.qtyRaw > 0);
   if (!pos || pos.qtyRaw === 0) return [];
-  const points = effectiveHistoryPoints(ctx.handle, instrumentId, instrument.type, span.begin, span.end);
+  const points = effectiveHistoryPoints(ctx.handle, instrumentId, instrument.type, span.begin, span.end, ctx.today);
   const out: { date: string; daily: string; cumulative: string }[] = [];
   let prevProfit: number | null = null;
   for (const p of points) {

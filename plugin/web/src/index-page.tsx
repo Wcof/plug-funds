@@ -25,16 +25,20 @@ import './index-page.css';
 
 interface MetricStats {
   current: number | null; percentile: number | null; avg: number | null;
+  asOfDate: string | null; provider: string | null;
+  percentileStatus: { state: 'VALID' | 'MISSING' | 'STALE' | 'CONFLICT' | 'SUSPECT'; reason: string | null };
   min: number | null; p20: number | null; p50: number | null; p80: number | null;
   max: number | null; samples: number;
 }
 interface IndexRow {
   id: string; code: string; name: string; tag: string; market: string;
   publishDate: string | null; close: number | null; ytdReturn: number | null;
+  priceDate: string | null; priceType: string | null; priceQuality: string | null;
   fundOn: number | null; fundOff: number | null;
   pe: MetricStats; pb: MetricStats; ps: MetricStats;
   roe: [number | null, number | null, number | null];
-  dividendYield: number | null; marketValue: number | null; quality: string;
+  dividendYield: number | null; dividendAsOfDate: string | null; dividendProvider: string | null;
+  marketValue: number | null; quality: string;
 }
 interface IndexResult {
   rows: IndexRow[]; count: number; note: string;
@@ -57,7 +61,7 @@ const METRIC_GROUPS = [
   { key: 'pb', title: 'PB' },
   { key: 'ps', title: 'PS' },
 ] as const;
-const ROE_LABELS = ['3年', '2年', '1年'];
+const ROE_LABELS = ['前3年', '前2年', '前1年'];
 
 /** 二级菜单：参考页两行共 16 项，这里的 key 决定渲染哪个视图。 */
 type SubKey =
@@ -96,10 +100,10 @@ const YEARS: { label: string; value: number }[] = [
 const HELP = [
   { name: 'PE-TTM', desc: '滚动市盈率：当前市值 / 过去 12 个月净利润。PE-TTM(扣非) 使用扣非净利润；PE-TTM(非扣非) 使用归属于母公司的净利润。' },
   { name: '当前值', desc: '当前指标的最新值。' },
-  { name: '分位点', desc: '当前值在过去所有取样点所在位置的百分数；样本数 < 20 时不产生数值。' },
+  { name: '分位点', desc: '当前值在所选历史区间取样点中的百分位；样本数不足 20 或跨度不足 180 天时不产生数值。估值策略使用近 3 年窗口。' },
   { name: 'PB', desc: '市净率：当前市值 / 净资产。PB(不含商誉) 扣除商誉；PB(含商誉) 使用归属于母公司的净资产。' },
   { name: 'PS-TTM', desc: '滚动市销率：当前市值 / 过去 12 个月主营业务收入。' },
-  { name: '扣非ROE', desc: '扣非净资产收益率 = 扣非净利润 / ((期初净资产 + 期末净资产) / 2)。' },
+  { name: 'ROE 年度观测', desc: '按估值日期取前 3、2、1 个自然年各年的最后一次观测；缺年留空。现有来源没有财报年度字段，不能将观测年份当作财报年度，也不能确认扣非口径。' },
 ];
 
 /** 结构预览：仅公开指数标识，无任何行情数值；真实数据接入后不显示。 */
@@ -122,6 +126,8 @@ const PREVIEW_NAMES: { code: string; name: string }[] = [
 
 const EMPTY_STATS: MetricStats = {
   current: null, percentile: null, avg: null, min: null,
+  asOfDate: null, provider: null,
+  percentileStatus: { state: 'MISSING', reason: '结构预览，没有本机估值数据' },
   p20: null, p50: null, p80: null, max: null, samples: 0,
 };
 
@@ -129,7 +135,9 @@ function previewRow(item: { code: string; name: string }): DisplayRow {
   return {
     id: `preview-${item.code}`, code: item.code, name: item.name, tag: '', market: '港股指数',
     publishDate: null, close: null, ytdReturn: null, fundOn: null, fundOff: null,
+    priceDate: null, priceType: null, priceQuality: null,
     pe: EMPTY_STATS, pb: EMPTY_STATS, ps: EMPTY_STATS,
+    dividendAsOfDate: null, dividendProvider: null,
     roe: [null, null, null], dividendYield: null, marketValue: null,
     quality: 'INSUFFICIENT', preview: true,
   };
@@ -140,6 +148,11 @@ function num(v: number | null, digits = 2): string {
 }
 function pct(v: number | null, digits = 2): string {
   return v === null || !Number.isFinite(v) ? '—' : `${v.toFixed(digits)}%`;
+}
+function priceDescription(row: DisplayRow): string {
+  const type = ({ REALTIME_PRICE: '实时报价', CLOSE_PRICE: '收盘价', MANUAL_PRICE: '手工价格', OFFICIAL_NAV: '正式净值' } as Record<string, string>)[row.priceType ?? ''] ?? '类型待核实';
+  const quality = ({ CONFLICT: '来源冲突', STALE: '已过期', DELAYED: '延迟', MANUAL: '手工录入' } as Record<string, string>)[row.priceQuality ?? ''];
+  return [type, row.priceDate, quality].filter(Boolean).join(' · ');
 }
 /** 红涨绿跌（A 股口径）；分位点 >=80 高位红、<=20 低位绿。 */
 function toneClass(v: number | null, kind: 'change' | 'temp'): string {
@@ -193,6 +206,9 @@ export function IndexPage(props: {
   // 指标列自定义：默认全开，保持与参考页一致的 36 列密度。
   const [groupKeys, setGroupKeys] = useState<string[]>(METRIC_GROUPS.map((g) => g.key));
   const [showRoe, setShowRoe] = useState(true);
+  // 行分页：目录导入后单表可达 500+ 行，全量渲染（36 列 × N 行）会让页面明显卡顿。
+  const [pageSize, setPageSize] = useState(50);
+  const [page, setPage] = useState(1);
 
   // onToast 在父组件每次渲染都是新函数，用 ref 固定，避免 load / useEffect 反复触发。
   const toastRef = useRef(props.onToast);
@@ -250,6 +266,15 @@ export function IndexPage(props: {
   }, [realRows, preview, market, category, sortKey, sortAsc]);
 
   const visibleGroups = METRIC_GROUPS.filter((g) => groupKeys.includes(g.key));
+
+  const totalPages = Math.max(1, Math.ceil(displayRows.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pagedRows = useMemo(
+    () => displayRows.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [displayRows, currentPage, pageSize],
+  );
+  // 筛选 / 排序 / 每页条数变化后回到第一页，避免停在空白页
+  useEffect(() => { setPage(1); }, [market, category, sortKey, sortAsc, pageSize]);
 
   const toggleSort = (key: string): void => {
     if (sortKey === key) setSortAsc((v) => !v);
@@ -324,22 +349,22 @@ export function IndexPage(props: {
 
   const exportRows = (): void => {
     const header = [
-      '代码', '指数名称', '发布时间', '收盘点位', '今年收益率(%)', '场内|场外',
-      ...visibleGroups.flatMap((g) => STAT_LABELS.map((l) => `${g.title}-${l}`)),
+      '代码', '指数名称', '发布时间', '最新点位', '价格日期', '价格类型', '价格质量', '今年收益率(%)', '场内|场外',
+      ...visibleGroups.flatMap((g) => [...STAT_LABELS.map((l) => `${g.title}-${l}`), `${g.title}-日期`, `${g.title}-来源`, `${g.title}-分位状态`, `${g.title}-分位说明`]),
       ...(showRoe ? ROE_LABELS.map((l) => `ROE-${l}`) : []), '股息率(%)', '市值',
     ];
     const lines = [header, ...displayRows.map((row) => [
-      row.code, row.name, row.publishDate ?? '', num(row.close), num(row.ytdReturn),
+      row.code, row.name, row.publishDate ?? '', num(row.close), row.priceDate ?? '', row.priceType ?? '', row.priceQuality ?? '', num(row.ytdReturn),
       row.fundOn === null || row.fundOff === null ? '' : `${row.fundOn}|${row.fundOff}`,
-      ...visibleGroups.flatMap((g) => STAT_KEYS.map((k) => {
+      ...visibleGroups.flatMap((g) => [...STAT_KEYS.map((k) => {
         const v = (row[g.key] as MetricStats)[k];
         return k === 'percentile' ? pct(v) : num(v);
-      })),
+      }), row[g.key].asOfDate ?? '', row[g.key].provider ?? '', row[g.key].percentileStatus.state, row[g.key].percentileStatus.reason ?? '']),
       ...(showRoe ? row.roe.map((v) => pct(v)) : []), pct(row.dividendYield), num(row.marketValue),
     ])];
     const yearLabel = YEARS.find((y) => y.value === years)?.label ?? `${years}年`;
     downloadCsv(`指数列表-${stat}-${yearLabel}.csv`, lines);
-    props.onToast('已导出当前视图（无数据的单元格保持为空）');
+    props.onToast('已导出当前视图，包含价格类型、估值来源、日期及分位状态说明；缺失值保留「—」');
   };
 
   const toggleFollow = (id: string, e: React.MouseEvent): void => {
@@ -512,7 +537,7 @@ export function IndexPage(props: {
             <span>PE 截面可用 <b className="num">{realRows.filter((r) => r.pe.current !== null).length}</b></span>
             <span>PE 分位可用 <b className="num">{realRows.filter((r) => r.pe.percentile !== null).length}</b></span>
             <div className="spacer" />
-            <span className="idx-ready-note">「—」表示本机缺数据、不是 0；分位样本 &lt; 20 不产生数值。</span>
+            <span className="idx-ready-note">「—」表示本机缺数据；分位要求样本 ≥20、跨度 ≥180 天。</span>
           </div>
 
           <div className="idx-table-wrap">
@@ -522,11 +547,11 @@ export function IndexPage(props: {
                   <th rowSpan={2} className="idx-fixed idx-f1">{sortLabel('code', '代码')}</th>
                   <th rowSpan={2} className="idx-fixed idx-f2">{sortLabel('name', `指数名称(${displayRows.length})`)}</th>
                   <th rowSpan={2}>{sortLabel('publishDate', '发布时间')}</th>
-                  <th rowSpan={2}>{sortLabel('close', '收盘点位')}</th>
+                  <th rowSpan={2}>{sortLabel('close', '最新点位')}</th>
                   <th rowSpan={2}>{sortLabel('ytdReturn', '今年收益率')}</th>
                   <th rowSpan={2}>场内|场外</th>
                   {visibleGroups.map((g) => <th key={g.key} colSpan={8} className="idx-group">{g.title}</th>)}
-                  {showRoe ? <th colSpan={3} className="idx-group">ROE</th> : null}
+                  {showRoe ? <th colSpan={3} className="idx-group" title="按观测日期归年，不代表财报年度">ROE 年度观测</th> : null}
                   <th rowSpan={2}>{sortLabel('dividendYield', '股息率')}</th>
                   <th rowSpan={2}>{sortLabel('marketValue', '市值')}</th>
                   <th rowSpan={2}>关注</th>
@@ -539,26 +564,29 @@ export function IndexPage(props: {
                 </tr>
               </thead>
               <tbody>
-                {displayRows.map((row) => (
+                {pagedRows.map((row) => (
                   <tr key={row.id} className={selected === row.id ? 'idx-selected' : ''} onClick={() => setSelected(row.id)}>
                     <td className="idx-fixed idx-f1 idx-code">{row.code}</td>
                     <td className="idx-fixed idx-f2 idx-name">
                       <button className="link" onClick={(e) => openName(row, e)}>{row.name}</button>
                     </td>
                     <td className="idx-na">{row.publishDate ?? '—'}</td>
-                    <td className="num">{num(row.close)}</td>
+                    <td className="num" title={row.close === null ? '暂无有效点位' : priceDescription(row)}>{num(row.close)}
+                      {row.close !== null ? <div className="date-cell">{priceDescription(row)}</div> : null}
+                    </td>
                     <td className={`num ${toneClass(row.ytdReturn, 'change')}`}>{pct(row.ytdReturn)}</td>
                     <td className="idx-na">{row.fundOn === null || row.fundOff === null ? '—' : `${row.fundOn}|${row.fundOff}`}</td>
                     {visibleGroups.flatMap((g) => STAT_KEYS.map((k) => {
                       const v = (row[g.key] as MetricStats)[k];
                       return (
-                        <td key={`${g.key}.${k}`} className={`num ${k === 'percentile' ? toneClass(v, 'temp') : ''}`}>
+                        <td key={`${g.key}.${k}`} className={`num ${k === 'percentile' ? toneClass(v, 'temp') : ''}`}
+                          title={`估值日期：${row[g.key].asOfDate ?? '缺失'}；来源：${row[g.key].provider ?? '缺失'}；区间样本：${row[g.key].samples}；分位状态：${row[g.key].percentileStatus.state}${row[g.key].percentileStatus.reason ? `；${row[g.key].percentileStatus.reason}` : ''}`}>
                           {k === 'percentile' ? pct(v) : num(v)}
                         </td>
                       );
                     }))}
                     {showRoe ? row.roe.map((v, i) => <td key={`roe${i}`} className="num">{pct(v)}</td>) : null}
-                    <td className="num">{pct(row.dividendYield)}</td>
+                    <td className="num" title={`股息率日期：${row.dividendAsOfDate ?? '缺失'}；来源：${row.dividendProvider === 'csindex-xls-calc-share' ? '中证 XLS（计算用股本）' : row.dividendProvider === 'csindex' ? '中证 JSON 快照' : row.dividendProvider ?? '缺失'}`}>{pct(row.dividendYield)}</td>
                     <td className="num">{num(row.marketValue)}</td>
                     <td>
                       <button type="button" className={`idx-star${followed.has(row.id) ? ' on' : ''}`}
@@ -582,6 +610,16 @@ export function IndexPage(props: {
 
           <div className="idx-foot">
             <span>共 {displayRows.length} 行 · 口径：{stat} · 区间：{YEARS.find((y) => y.value === years)?.label}</span>
+            {displayRows.length > pageSize ? (
+              <span className="idx-pager">
+                <button type="button" className="idx-page-btn" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>上一页</button>
+                <b className="num">{currentPage}</b> / {totalPages}
+                <button type="button" className="idx-page-btn" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>下一页</button>
+                <select className="idx-page-size" value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
+                  {[50, 100, 200, 500].map((n) => <option key={n} value={n}>每页 {n}</option>)}
+                </select>
+              </span>
+            ) : null}
             <span className="idx-foot-note">{briefNote}</span>
             <button type="button" className="idx-foot-more" onClick={() => setHelpOpen(true)}>完整口径 →</button>
           </div>

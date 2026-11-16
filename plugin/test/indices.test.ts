@@ -22,6 +22,15 @@ import type { Instrument, MarketPoint } from '../core/src/types.ts';
 
 const TODAY = '2026-11-16';
 
+/**
+ * 单测禁止访问真实网络。
+ * 中证官网接口在开发机上可达，若不拦住，fixture 断言会随当天真实行情漂移
+ * （曾出现 13.4 被真实官方值 14.64 顶掉）。需要网络的验证放在 smoke / verify 脚本里。
+ */
+globalThis.fetch = (async () => {
+  throw new Error('tests must not use network');
+}) as typeof globalThis.fetch;
+
 let handle!: DbHandle;
 let ctx!: ServiceContext;
 

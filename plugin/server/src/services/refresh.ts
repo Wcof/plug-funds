@@ -15,10 +15,18 @@ import type { DataQuality, MarketPoint } from '../../../core/src/types.ts';
 import type { ServiceContext } from '../context.ts';
 import { allTransactions } from '../repo/transactions.ts';
 import { listInstruments } from '../repo/instruments.ts';
-import { metricHistory, saveMarketPoints, saveValuationMetric } from '../repo/market.ts';
+import { archiveIndexQuotePe, latestMetricDate, metricHistory, saveMarketPoints, saveValuationMetric } from '../repo/market.ts';
 import { detectConflict, type QuoteCandidate } from '../market/conflict.ts';
-import { fetchCsindexIndicator, snapshotToMetrics } from '../market/csindex.ts';
+import { fetchCsindexIndicator, snapshotToMetrics, type CsindexMetric } from '../market/csindex.ts';
+import {
+  CSINDEX_SNAPSHOT_CODES,
+  fetchPeTtmHistory,
+  fetchValuationSnapshot,
+  snapshotToMetrics as snapshotToOfficialMetrics,
+} from '../market/csindex-valuation.ts';
+import { getCsindexCoveredCodes, rememberCsindexCovered } from '../market/csindex-coverage.ts';
 import { listHoldings } from './holdings.ts';
+import { getTradingCalendarInfo } from './calendar.ts';
 import { newId, nowIso, todayLocal } from '../ids.ts';
 
 /** 经验分位的最小样本数；不足则不产生分位（UI 显示「样本不足」）。 */
@@ -53,8 +61,8 @@ export interface RefreshItemResult {
   conflict: RefreshConflict | null;
 }
 
-function daysAgo(days: number): string {
-  const d = new Date();
+function daysAgo(days: number, today: string): string {
+  const d = new Date(`${today}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() - days);
   return d.toISOString().slice(0, 10);
 }
@@ -63,16 +71,68 @@ function messageOf(error: unknown): string {
   return String((error as Error).message ?? error).slice(0, 200);
 }
 
+/**
+ * 过滤掉「当日未收盘」的 CLOSE_PRICE。
+ *
+ * 盘中（含午休）K 线最后一根是当日未完成 bar，写进历史会被当成收盘价。
+ * 收盘后（`closeSettled`）原样返回，不做任何取舍。
+ */
+export function dropUnsettledClose(points: MarketPoint[], today: string, closeSettled: boolean): MarketPoint[] {
+  if (closeSettled) return points;
+  return points.filter((point) => !(point.tradingDate === today && point.priceType === 'CLOSE_PRICE'));
+}
+
 export async function refreshMarketData(
   ctx: ServiceContext,
   filter: { instrumentIds?: string[] } = {},
 ): Promise<{ results: RefreshItemResult[]; startedAt: string; snapshots: { portfolio: boolean; holdings: number } }> {
   const startedAt = new Date().toISOString();
-  const today = todayLocal();
+  const today = ctx.today;
   const instruments = listInstruments(ctx.handle, { active: true }).filter(
     (i) => !filter.instrumentIds || filter.instrumentIds.includes(i.id),
   );
   const results: RefreshItemResult[] = [];
+
+  /**
+   * 中证官方估值快照一轮只拉一次。
+   * 快照接口返回的是固定 8 只仪表盘指数的**同一份**数据，若放在标的循环里，
+   * 500+ 只指数就是 500+ 次重复请求（既慢又容易被 WAF 盯上）。
+   */
+  let officialSnapshot: Awaited<ReturnType<typeof fetchValuationSnapshot>> | null = null;
+  let officialSnapshotError: string | null = null;
+  let snapshotErrorNoted = false;
+  const getOfficialSnapshot = async (): Promise<Awaited<ReturnType<typeof fetchValuationSnapshot>>> => {
+    if (officialSnapshot !== null) return officialSnapshot;
+    try {
+      officialSnapshot = await fetchValuationSnapshot();
+    } catch (error) {
+      officialSnapshot = [];
+      officialSnapshotError = messageOf(error);
+    }
+    return officialSnapshot;
+  };
+
+  /**
+   * 中证官网的覆盖范围 = 000 前缀（中证 / 上证系列）+ 已验证有数据的深市代码。
+   * 399 里混着中证编制的指数（中证白酒 399997 等，实测 44 个），其余是国证 / 深证自编，
+   * 官网没有估值文件；逐个试探会白打 300+ 次接口，因此用持久化的覆盖清单判断。
+   */
+  const coveredCodes = getCsindexCoveredCodes(ctx.handle);
+  const hasCsindexCoverage = (code: string): boolean => code.startsWith('000') || coveredCodes.has(code);
+
+  /**
+   * 收盘价只在**收盘之后**才允许写。
+   * 盘中（含 11:30–13:00 午休）K 线的最后一根是「当日未收盘 bar」，把它当 CLOSE_PRICE 落库
+   * 等于把一个时刻的盘中价冒充当日收盘价，而同一天还有一条真的 REALTIME_PRICE。
+   * 判据用会话阶段而不是 `open`：午休时 open=false，但当天收盘价同样还没定。
+   */
+  let closeSettled = false;
+  try {
+    const phase = getTradingCalendarInfo(ctx).session.phase;
+    closeSettled = today < todayLocal() || (today === todayLocal() && (phase === 'after' || phase === 'closed-day'));
+  } catch {
+    closeSettled = false;
+  }
 
   for (const instrument of instruments) {
     const providers = ctx.registry.resolveAll(instrument);
@@ -94,15 +154,21 @@ export async function refreshMarketData(
     const currentMetrics = new Map<string, { value: string; asOfDate: string }>();
     let historyDone = false;
     let estimateTried = false;
+    /** 本轮或历史库里已有中证官方滚动 PE：只有这时才拒绝报价端的 pe。 */
+    let officialPe = false;
 
     // 指数：优先取中证指数官网的官方估值（PE1/PE2 + 股息率1/2，20 个交易日截面）。
     // 注意官方 PE 落的是 `pe_official`，不覆盖报价端的 `pe`（口径差 2%–19%，混用会让分位跳变）；
-    // 股息率只有官方源提供，因此 `dividend_yield` 由这里写入并占位，后续源不再重复写。
+    // XLS 股息率1/2分别留档，JSON主值不能被计算用股本口径提前占位。
     if (instrument.type === 'INDEX') {
+      const csindexCovered = hasCsindexCoverage(instrument.code);
+      let xlsDividendHistory: CsindexMetric[] = [];
+      let matchedJsonSnapshot = false;
       try {
-        const snapshots = await fetchCsindexIndicator(instrument);
+        const snapshots = csindexCovered ? await fetchCsindexIndicator(instrument) : [];
         if (snapshots.length > 0) {
           const { latest, history } = snapshotToMetrics(instrument.id, snapshots);
+          xlsDividendHistory = history.filter((row) => row.metricKey === 'dividend_yield_calc_share');
           for (const row of history) {
             saveValuationMetric(ctx.handle, {
               instrumentId: instrument.id, metricKey: row.metricKey, value: row.value,
@@ -118,14 +184,98 @@ export async function refreshMarketData(
           item.providers = [...new Set([...item.providers, 'csindex'])];
         }
       } catch (error) {
-        notes.push(`中证官方估值失败：${messageOf(error)}`);
+        notes.push(`中证官方估值(xls)失败：${messageOf(error)}`);
+      }
+
+      // 逐日滚动 PE 历史：必须先于快照写入。
+      // 快照会先落一条「最新日」的 pe，若之后才判增量，`lastDate` 就等于最新日，
+      // 历史点全部 <= lastDate 而被判成「已是最新」，首次接入会只写 1 条。
+      try {
+        const lastDate = latestMetricDate(ctx.handle, instrument.id, 'pe', 'csindex');
+        const points = (csindexCovered ? await fetchPeTtmHistory(instrument.code) : []).filter((point) => point.tradeDate <= today);
+        if (points.length > 0) archiveIndexQuotePe(ctx.handle, instrument.id);
+        // 首次接入只补最近 60 个交易日；完整历史由 scripts/backfill-metrics.mjs 显式回填，
+        // 避免每次自动刷新都把十几年数据重写一遍。
+        const fresh = lastDate === null
+          ? points.slice(-60)
+          : points.filter((point) => point.tradeDate > lastDate);
+        for (const point of fresh) {
+          saveValuationMetric(ctx.handle, {
+            instrumentId: instrument.id, metricKey: 'pe', value: String(point.peTtm),
+            asOfDate: point.tradeDate, provider: 'csindex', quality: 'FRESH',
+          });
+        }
+        if (points.length > 0) {
+          const latest = points[points.length - 1];
+          officialPe = true;
+          if (!coveredCodes.has(instrument.code)) {
+            coveredCodes.add(instrument.code);
+            rememberCsindexCovered(ctx.handle, instrument.code);
+          }
+          // 快照未覆盖的指数（科创50 / 中证1000）也要有 current，分位才算得出来
+          if (!currentMetrics.has('pe')) currentMetrics.set('pe', { value: String(latest.peTtm), asOfDate: latest.tradeDate });
+          item.provider = item.provider ?? 'csindex';
+          item.providers = [...new Set([...item.providers, 'csindex'])];
+        }
+      } catch (error) {
+        notes.push(`中证官方 PE 历史失败：${messageOf(error)}`);
+      }
+
+      // 指数：中证官网 JSON 官方估值（与上面的 xls 互补）。
+      // xls 有 PE1/PE2/股息率但没有 PB，且该 OSS 有 WAF 会整段拦截；
+      // JSON 给 PB + 静态 PE + 滚动 PE，另有逐日滚动 PE 全量历史（沪深300 可回溯到 2011 年）。
+      try {
+        const valuation = csindexCovered ? await getOfficialSnapshot() : [];
+        const matched = valuation.find((row) => row.indexName === instrument.name && row.tradeDate <= today);
+        if (matched) {
+          matchedJsonSnapshot = true;
+          if (snapshotToOfficialMetrics(matched).some((metric) => metric.metricKey === 'pe')) archiveIndexQuotePe(ctx.handle, instrument.id);
+          for (const metric of snapshotToOfficialMetrics(matched)) {
+            if (writtenMetricKeys.has(metric.metricKey)) continue;
+            saveValuationMetric(ctx.handle, {
+              instrumentId: instrument.id, metricKey: metric.metricKey, value: metric.value,
+              asOfDate: metric.asOfDate, provider: 'csindex', quality: metric.quality,
+            });
+            writtenMetricKeys.add(metric.metricKey);
+            item.metrics += 1;
+            if (metric.metricKey === 'pe') officialPe = true;
+            currentMetrics.set(metric.metricKey, { value: metric.value, asOfDate: metric.asOfDate });
+          }
+          item.provider = item.provider ?? 'csindex';
+          item.providers = [...new Set([...item.providers, 'csindex'])];
+        }
+      } catch (error) {
+        notes.push(`中证官方估值(JSON)失败：${messageOf(error)}`);
+      }
+      // 已知 JSON 覆盖或曾有 JSON 静态 PE 的标的，失败时保持原口径，不用 XLS 覆盖。
+      // 其余标的使用 XLS 兜底时在 provider 明确标出计算用股本口径。
+      const hasJsonSnapshot = matchedJsonSnapshot || CSINDEX_SNAPSHOT_CODES.has(instrument.code)
+        || latestMetricDate(ctx.handle, instrument.id, 'pe_official_static', 'csindex') !== null;
+      if (!hasJsonSnapshot && xlsDividendHistory.length > 0) {
+        for (const metric of xlsDividendHistory) {
+          saveValuationMetric(ctx.handle, { instrumentId: instrument.id, metricKey: 'dividend_yield',
+            value: metric.value, asOfDate: metric.asOfDate, provider: 'csindex-xls-calc-share', quality: metric.quality });
+        }
+        const latestDividend = xlsDividendHistory.reduce((latest, metric) => metric.asOfDate > latest.asOfDate ? metric : latest);
+        writtenMetricKeys.add('dividend_yield');
+        item.metrics += 1;
+        if (latestDividend.value !== null) currentMetrics.set('dividend_yield', { value: latestDividend.value, asOfDate: latestDividend.asOfDate });
+      }
+      if (csindexCovered && officialSnapshotError && !snapshotErrorNoted) {
+        snapshotErrorNoted = true;
+        notes.push(`中证官方估值快照不可用：${officialSnapshotError}`);
       }
     }
+
+    // 已有官方滚动 PE 时不再写报价端 pe（两者最多差 59%，混在一列会让分位静默跳变）；
+    // 官方未覆盖的指数（深证成指 / 创业板指）仍保留报价端 pe，否则会从「有值」变成「无值」。
+    const hasOfficialPe = officialPe || latestMetricDate(ctx.handle, instrument.id, 'pe', 'csindex') !== null;
+    if (instrument.type === 'INDEX' && hasOfficialPe) archiveIndexQuotePe(ctx.handle, instrument.id);
 
     for (const provider of providers) {
       try {
         const quote = await provider.fetchQuote(instrument);
-        if (quote) {
+        if (quote && quote.tradingDate <= today && dropUnsettledClose([quote], today, closeSettled).length > 0) {
           quotes.push({ quote, provider: provider.id });
           candidates.push({
             provider: provider.id, value: quote.value,
@@ -138,10 +288,11 @@ export async function refreshMarketData(
 
       if (!historyDone) {
         try {
-          const history = await provider.fetchHistory(instrument, { begin: daysAgo(400), end: today });
-          if (history.length > 0) {
-            saveMarketPoints(ctx.handle, history);
-            item.history = history.length;
+          const history = await provider.fetchHistory(instrument, { begin: daysAgo(400, today), end: today });
+          const usable = dropUnsettledClose(history.filter((point) => point.tradingDate <= today), today, closeSettled);
+          if (usable.length > 0) {
+            saveMarketPoints(ctx.handle, usable);
+            item.history = usable.length;
             historyDone = true;
             item.provider = item.provider ?? provider.id;
           }
@@ -154,18 +305,22 @@ export async function refreshMarketData(
         try {
           const metrics = await provider.fetchMetrics(instrument);
           for (const metric of metrics) {
-            if (writtenMetricKeys.has(metric.metricKey)) continue;
+            // 指数的 PE 一律以中证官方滚动口径为准：报价端给指数的 PE 与官方差
+            // 1.2%–59.2%（实测科创50 91.23 vs 57.31），写进来会把分位序列带偏。
+            if (metric.asOfDate > today) continue;
+            const metricKey = instrument.type === 'INDEX' && metric.metricKey === 'pe' && hasOfficialPe ? 'pe_quote' : metric.metricKey;
+            if (writtenMetricKeys.has(metricKey)) continue;
             saveValuationMetric(ctx.handle, {
               instrumentId: instrument.id,
-              metricKey: metric.metricKey,
+              metricKey,
               value: metric.value,
               asOfDate: metric.asOfDate,
               provider: provider.id,
               quality: metric.quality,
             });
-            writtenMetricKeys.add(metric.metricKey);
+            writtenMetricKeys.add(metricKey);
             item.metrics += 1;
-            if (metric.value !== null) currentMetrics.set(metric.metricKey, { value: metric.value, asOfDate: metric.asOfDate });
+            if (metric.value !== null) currentMetrics.set(metricKey, { value: metric.value, asOfDate: metric.asOfDate });
           }
         } catch (error) {
           notes.push(`${provider.id} 估值失败：${messageOf(error)}`);
@@ -190,9 +345,10 @@ export async function refreshMarketData(
     const conflict = detectConflict(candidates);
     if (quotes.length > 0) {
       const primary = quotes[0];
-      const quality: DataQuality = conflict ? 'CONFLICT' : primary.quote.quality;
-      saveMarketPoints(ctx.handle, [{ ...primary.quote, quality }]);
-      item.quotes = 1;
+      saveMarketPoints(ctx.handle, quotes.map(({ quote }) => ({ ...quote, quality: conflict
+        && quote.tradingDate === conflict.tradingDate && quote.priceType === primary.quote.priceType
+        ? 'CONFLICT' as DataQuality : quote.quality })));
+      item.quotes = quotes.length;
       item.provider = primary.provider;
       if (conflict) {
         item.conflict = {
@@ -208,13 +364,16 @@ export async function refreshMarketData(
     }
 
     // PE / PB 历史分位：由已落库的历史截面积累自动计算（样本不足不写，不伪造）
-    const since = new Date(`${today}T00:00:00Z`);
-    since.setUTCFullYear(since.getUTCFullYear() - 3);
-    const sinceDate = since.toISOString().slice(0, 10);
     for (const key of ['pe', 'pb'] as const) {
       const current = currentMetrics.get(key);
       if (!current) continue;
-      const series = metricHistory(ctx.handle, instrument.id, key, sinceDate);
+      const ageDays = (Date.parse(today) - Date.parse(current.asOfDate)) / 86_400_000;
+      if (ageDays < 0 || ageDays > 7) continue;
+      // 与官方回填一致：窗口属于该基础指标截面，不能随刷新日期漂移。
+      const since = new Date(`${current.asOfDate}T00:00:00Z`);
+      since.setUTCFullYear(since.getUTCFullYear() - 3);
+      const sinceDate = since.toISOString().slice(0, 10);
+      const series = metricHistory(ctx.handle, instrument.id, key, sinceDate, current.asOfDate);
       if (series.length < MIN_PERCENTILE_SAMPLES) continue;
       // 跨度守卫：样本够但只看了一个月 → 那是「近 1 月分位」，不能当近 3 年分位用
       const spanDays = (Date.parse(`${current.asOfDate}T00:00:00Z`) - Date.parse(`${series[0].asOfDate}T00:00:00Z`)) / 86_400_000;

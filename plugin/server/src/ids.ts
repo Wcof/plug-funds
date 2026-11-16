@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { shanghaiParts } from '../../core/src/calendar.ts';
 
 export function newId(): string {
   return randomUUID();
@@ -8,9 +9,7 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
-/** 本地日期 YYYY-MM-DD（用于 trade_date / trading_date / as_of_date）。 */
-export function todayLocal(): string {
-  const d = new Date();
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+/** 交易日期统一采用 UTC+8，不依赖宿主操作系统时区。 */
+export function todayLocal(now: Date = new Date()): string {
+  return shanghaiParts(now).date;
 }

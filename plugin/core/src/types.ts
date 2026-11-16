@@ -7,7 +7,7 @@
  */
 
 /** 当前数据 schema 版本；高于本版本的库拒绝打开（先升插件，再写数据）。 */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /* ---------------- 账户 ---------------- */
 

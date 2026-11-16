@@ -62,11 +62,12 @@ interface MetricLite {
   value: string | null;
   asOfDate: string;
   provider: string;
+  quality: string;
 }
 
 function metricNumber(metrics: MetricLite[], key: string): number | null {
   const row = metrics.find((m) => m.key === key);
-  if (!row || row.value === null) return null;
+  if (!row || row.value === null || row.value.trim() === '') return null;
   const parsed = Number(row.value);
   return Number.isFinite(parsed) ? parsed : null;
 }
@@ -82,8 +83,8 @@ function oneYearSpan(today: string): { begin: string; end: string } {
 function riskStats(ctx: ServiceContext, instrument: Instrument): { sharpe: number | null; vol: number | null; mdd: number | null } {
   try {
     const span = oneYearSpan(ctx.today);
-    const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type, span.begin, span.end);
-    if (points.length < 20) return { sharpe: null, vol: null, mdd: null };
+    const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type, span.begin, span.end, ctx.today);
+    if (points.length < 20 || points.some((point) => ['CONFLICT', 'MISSING'].includes(point.quality))) return { sharpe: null, vol: null, mdd: null };
     const series: ChartPoint[] = points.map((p) => ({ date: p.tradingDate, value: p.value }));
     return seriesStats(series);
   } catch {
@@ -101,9 +102,14 @@ function caliberFor(instrument: Instrument, metrics: MetricLite[], pe: number | 
     caliber = `个股 PE-TTM / PB · ${asOf ?? '暂无披露'}`;
   } else if (instrument.type === 'INDEX') {
     const official = metrics.find((m) => m.key === 'pe_official');
+    const staticPe = metrics.find((m) => m.key === 'pe_official_static');
     const dividend = metrics.find((m) => m.key === 'dividend_yield');
-    const parts = [`指数 PE ${pe === null ? '未获取' : '报价端口径'}`];
-    if (official) parts.push(`中证官方 PE2 ${official.value}（${official.asOfDate}）`);
+    const peMetric = metrics.find((metric) => metric.key === 'pe');
+    const source = peMetric?.provider === 'csindex' ? '中证官方滚动口径'
+      : peMetric?.provider === 'manual' ? '手工补录，口径待核实' : `报价口径（${peMetric?.provider ?? '来源未知'}），不可与官方滚动口径直接比较`;
+    const parts = [`指数 PE ${pe === null ? '未获取' : `${source} · ${peMetric?.asOfDate ?? '日期未知'}`}`];
+    if (staticPe) parts.push(`静态 PE ${staticPe.value}`);
+    if (official) parts.push(`官方 PE2 ${official.value}（${official.asOfDate}）`);
     if (dividend) parts.push(`股息率 ${dividend.value}%`);
     caliber = parts.join(' · ');
   } else if (isFund && !hasIndexLink && pe === null) {
@@ -148,14 +154,24 @@ export async function getHoldingsValuation(
   const rows: ValuationRow[] = [];
   for (const { instrument, held } of targets) {
     if (filter.type && instrument.type !== filter.type) continue;
-    const metrics = latestValuationMetrics(ctx.handle, instrument.id);
-    const lite: MetricLite[] = metrics.map((m) => ({ key: m.metricKey, value: m.value, asOfDate: m.asOfDate, provider: m.provider }));
+    const metrics = latestValuationMetrics(ctx.handle, instrument.id, ctx.today);
+    const lite: MetricLite[] = metrics.map((m) => ({ key: m.metricKey, value: m.value, asOfDate: m.asOfDate, provider: m.provider, quality: m.quality }));
+    // 派生分位只在基础指标同日且仍新鲜时参与评分；旧值可追溯，但不能当当前判断。
+    const usablePercentile = (key: string): number | null => {
+      const metric = lite.find((row) => row.key === `${key}_percentile`);
+      const base = lite.find((row) => row.key === key);
+      const value = metricNumber(lite, `${key}_percentile`);
+      if (!metric || !base || metric.asOfDate !== base.asOfDate || value === null || value < 0 || value > 100) return null;
+      const age = (Date.parse(ctx.today) - Date.parse(metric.asOfDate)) / 86_400_000;
+      return age >= 0 && age <= 7 && !['STALE', 'CONFLICT', 'MISSING'].includes(metric.quality)
+        && !['STALE', 'CONFLICT', 'MISSING'].includes(base.quality) ? value : null;
+    };
 
     const stats = riskStats(ctx, instrument);
     const pe = metricNumber(lite, 'pe');
     const pb = metricNumber(lite, 'pb');
-    const pePct = metricNumber(lite, 'pe_percentile');
-    const pbPct = metricNumber(lite, 'pb_percentile');
+    const pePct = usablePercentile('pe');
+    const pbPct = usablePercentile('pb');
     const dy = metricNumber(lite, 'dividend_yield');
     const roe = metricNumber(lite, 'roe');
 
@@ -190,7 +206,8 @@ export async function getHoldingsValuation(
       sharpe: stats.sharpe,
       volatilityPct: stats.vol === null ? null : stats.vol * 100,
       maxDrawdownPct: stats.mdd === null ? null : stats.mdd * 100,
-      caliber: caliberFor(instrument, lite, pe),
+      caliber: caliberFor(instrument, lite, pe) + (lite.some((metric) => metric.key.endsWith('_percentile') && (metric.key === 'pe_percentile' ? pePct : pbPct) === null)
+        ? ' · 分位过期、不同日或质量存疑，不参与评分' : ''),
       strategies,
     });
   }
@@ -199,6 +216,6 @@ export async function getHoldingsValuation(
     rows,
     scope,
     total: scope === 'all' ? everyInstrument.filter((instrument) => instrument.active).length : rows.length,
-    note: '口径：基金 / ETF 用跟踪指数穿透估值并标注日期；主动基金不提供实时穿透；股票为 PE-TTM / 最近披露财报；指数为指数估值截面。分位为近 3 年历史分位（样本不足显示「样本不足」）。本视图不含收益；缺失指标显示「数据不足」，不填 0。',
+    note: '口径：基金 / ETF 用跟踪指数穿透估值并标注日期；主动基金不提供实时穿透；股票为 PE-TTM / 最近披露财报；指数为指数估值截面。分位为近 3 年历史分位（样本不足显示「样本不足」）。分位超过 7 个自然日不参与评分，这是保守新鲜度规则，不证明原值错误。本视图不含收益；缺失指标显示「数据不足」，不填 0。',
   };
 }

@@ -139,9 +139,9 @@ export function restoreBackup(ctx: ServiceContext, payload: unknown): {
       asArray(data, 'marketData'), 'marketData',
       (r) => [newId(), str(r.instrumentId), str(r.priceType), str(r.value), str(r.tradingDate), str(r.observedAt, nowIso()), str(r.provider, 'restore'), str(r.quality, 'STALE')]);
 
-    insert(`INSERT INTO valuation_metrics (id,instrument_id,metric_key,value,as_of_date,provider,quality) VALUES (?,?,?,?,?,?,?)`,
+    insert(`INSERT INTO valuation_metrics (instrument_id,metric_key,value,as_of_date,provider,quality) VALUES (?,?,?,?,?,?)`,
       asArray(data, 'valuationMetrics'), 'valuationMetrics',
-      (r) => [newId(), str(r.instrumentId), str(r.metricKey), typeof r.value === 'string' ? r.value : null, str(r.asOfDate), str(r.provider, 'restore'), str(r.quality, 'STALE')]);
+      (r) => [str(r.instrumentId), str(r.metricKey), typeof r.value === 'string' ? r.value : null, str(r.asOfDate), str(r.provider, 'restore'), str(r.quality, 'STALE')]);
 
     insert(`INSERT INTO portfolio_goals (id,name,target_amount,currency,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`,
       asArray(data, 'goals'), 'goals',

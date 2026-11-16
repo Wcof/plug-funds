@@ -8,7 +8,8 @@
  *
  * --browser（动态层，需本机 Google Chrome）：
  *   mock DSH 宿主 + 真实 HTTP + CDP 打开产物，断言侧栏含「指数」、
- *   点击后双层表头 / 36 列 / sticky 固定列 / 零控制台错误。
+ *   点击后双层表头 / 36 列 / sticky 固定列 / 零控制台错误；
+ *   AI 用本地假上游验证配置引导、连接测试、首次授权与分析结果，不接触真实 Key 或持仓。
  *
  * 用法：
  *   node plugin/scripts/verify-web.mjs                 # 仅静态
@@ -104,8 +105,7 @@ function staticChecks() {
 // ---------------------------------------------------------------- 动态层
 async function browserChecks() {
   if (!fs.existsSync(CHROME)) {
-    console.error(`[browser] 未找到 Chrome：${CHROME}，跳过动态层（静态层结果仍有效）`);
-    return;
+    throw new Error(`未找到 Chrome：${CHROME}，无法完成请求的动态层验收`);
   }
   if (!fs.existsSync(indexJs)) throw new Error(`缺少 host bundle：${indexJs}`);
 
@@ -113,8 +113,10 @@ async function browserChecks() {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'plugfunds-web-cdp-'));
   process.env.PLUG_FUNDS_STATE_DIR = stateDir;
   process.env.DSH_HOME = stateDir;
+  process.env.PLUG_FUNDS_DISABLE_KEYCHAIN = '1';
 
   const routes = new Map();
+  const disposers = [];
   const mockCtx = {
     inject(_services, fn) {
       fn({
@@ -122,21 +124,51 @@ async function browserChecks() {
           register(route) { routes.set(route.path, route.handler); return () => undefined; },
           getOrigin: () => 'http://127.0.0.1:0',
         },
-        effect: (f) => f(),
+        effect: (f) => {
+          const dispose = f();
+          if (typeof dispose === 'function') disposers.push(dispose);
+          return dispose;
+        },
       });
     },
   };
   const { apply } = await import(indexJs);
   apply(mockCtx);
 
+  const aiModel = 'verify-web-local-model';
+  const aiKey = 'sk-verify-web-local-fixture-only';
+  const aiResult = '## 浏览器验收结果\n仅分析隔离验证持仓。\n- PE/PB 缺失，不能给出估值结论。';
+  const aiRequests = [];
+  const aiFixtureErrors = [];
   const server = http.createServer((request, response) => {
     const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+    if (pathname === '/ai-fixture/v1/chat/completions') {
+      let body = '';
+      request.setEncoding('utf8');
+      request.on('data', (chunk) => { body += chunk; });
+      request.on('end', () => {
+        try {
+          const payload = JSON.parse(body);
+          const probe = payload.messages?.length === 1 && payload.messages[0]?.content === '请只回复两个字：连通';
+          aiRequests.push({ payload, probe, authorized: request.headers.authorization === `Bearer ${aiKey}` });
+          response.writeHead(200, { 'content-type': 'application/json' });
+          response.end(JSON.stringify({
+            choices: [{ finish_reason: 'stop', message: { content: probe ? '连通' : aiResult } }],
+          }));
+        } catch {
+          aiFixtureErrors.push('本地 AI 上游收到非法 JSON');
+          response.writeHead(400).end();
+        }
+      });
+      return;
+    }
     const hit = [...routes.entries()].find(([p]) => pathname === p || pathname.startsWith(`${p}/`));
     if (hit) { hit[1](request, response); return; }
     response.writeHead(404).end();
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${server.address().port}${ROUTE}/`;
+  const aiBaseUrl = `http://127.0.0.1:${server.address().port}/ai-fixture/v1`;
 
   /** 通过真实 RPC 播种最小可验证数据（现金面板 / 再平衡需要有数据才不是空表）。 */
   const rpcPost = async (method, params = {}) => {
@@ -149,6 +181,7 @@ async function browserChecks() {
     if (!body.success) throw new Error(`seed ${method} 失败：${JSON.stringify(body.error)}`);
     return body.data;
   };
+  await rpcPost('save_refresh_settings', { enabled: false });
   const account = await rpcPost('save_account', { name: '验证账户', platform: '本地' });
   const stock = await rpcPost('save_instrument', { code: '600036', name: '招商银行', type: 'STOCK', market: 'SH', secid: '1.600036' });
   await rpcPost('record_transaction', {
@@ -189,6 +222,7 @@ async function browserChecks() {
   const pending = new Map();
   const errors = [];
   const failedRequests = [];
+  const browserRpcMethods = [];
   const send = (method, params = {}) => new Promise((resolve, reject) => {
     const id = ++seq;
     const timer = setTimeout(() => { pending.delete(id); reject(new Error(`CDP 超时 ${method}`)); }, 30000);
@@ -231,6 +265,9 @@ async function browserChecks() {
       }
       if (m.method === 'Network.responseReceived' && m.params?.response?.status >= 400) {
         failedRequests.push(`${m.params.response.status} ${m.params.response.url}`);
+      }
+      if (m.method === 'Network.requestWillBeSent' && m.params?.request?.url === `${base}api/rpc`) {
+        try { browserRpcMethods.push(JSON.parse(m.params.request.postData).method); } catch { /* 非 RPC 请求不计数 */ }
       }
       if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
     };
@@ -360,6 +397,92 @@ async function browserChecks() {
     const setTabs = await evaluate('[...document.querySelectorAll(".sub-tab")].map(e => e.innerText.trim())');
     expect('设置页渲染 3 个分页', Array.isArray(setTabs) && setTabs.length === 3, JSON.stringify(setTabs));
 
+    // AI 只对本次隔离库内的验证持仓发请求；本地上游计数同时守住确认前不外发与重复点击。
+    const clickText = async (selector, label) => evaluate(`(() => {
+      const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find(e => e.innerText.trim() === ${JSON.stringify(label)});
+      if (!el) return false; el.click(); return true;
+    })()`);
+    const waitFor = async (expression, label) => {
+      for (let i = 0; i < 40; i += 1) {
+        if (await evaluate(expression)) return;
+        await sleep(150);
+      }
+      const detail = await evaluate('[...document.querySelectorAll(".toast,.set-hint,.modal .empty,.page-error-msg")].map(e => e.innerText.trim()).join(" | ").slice(0, 700)');
+      throw new Error(`等待 ${label} 超时；${detail || '页面未显示诊断信息'}；本地 AI 请求 ${aiRequests.length} 次`);
+    };
+    const analysisCount = () => aiRequests.filter((request) => !request.probe).length;
+    const analysisRpcCount = () => browserRpcMethods.filter((method) => method === 'analyze_holding_with_ai').length;
+
+    expect('AI 验收使用无配置的隔离库', (await rpcPost('get_ai_settings')).configured === false);
+    expect('可从持仓页打开 AI 分析', await clickNav('持仓') === true);
+    await waitFor('[...document.querySelectorAll(".ops-cell button")].some(e => e.innerText.trim() === "AI 分析")', '持仓 AI 入口');
+    expect('持仓 AI 分析按钮可点击', await clickText('.ops-cell button', 'AI 分析') === true);
+    await waitFor('[...document.querySelectorAll(".modal button")].some(e => e.innerText.trim() === "前往 AI 配置")', 'AI 未配置引导');
+    const aiUnconfigured = await evaluate('document.querySelector(".modal")?.innerText ?? ""');
+    expect('未配置时显示配置与连接测试引导', aiUnconfigured.includes('未配置') && aiUnconfigured.includes('测试连接成功'), aiUnconfigured);
+    expect('未配置时没有分析 RPC 或上游调用', analysisRpcCount() === 0 && aiRequests.length === 0);
+    expect('未配置引导可前往设置', await clickText('.modal button', '前往 AI 配置') === true);
+    await waitFor('document.querySelector(".page-head h1")?.innerText.trim() === "设置" && !document.querySelector(".modal")', 'AI 配置导航');
+    expect('可切换到 AI 配置分页', await clickText('.sub-tab', 'AI 配置') === true);
+    await waitFor('[...document.querySelectorAll(".field label")].some(e => e.innerText.trim() === "Base URL")', 'AI 配置表单');
+    // 等待设置页的初始批量读取完成，避免异步 load 用空配置覆盖刚填入的表单。
+    await waitFor(`document.querySelector('.update-line')?.innerText.includes(${JSON.stringify(stateDir)})`, '设置页初始数据');
+    const filledAiForm = await evaluate(`(() => {
+      const values = ${JSON.stringify({ 'Base URL': aiBaseUrl, '模型': aiModel, 'API Key': aiKey })};
+      for (const [label, value] of Object.entries(values)) {
+        const field = [...document.querySelectorAll('.field')].find(e => e.querySelector('label')?.innerText.trim() === label);
+        const input = field?.querySelector('input');
+        if (!input) return false;
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, value);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      return true;
+    })()`);
+    expect('AI 表单可填写本地上游、验证模型与哑 Key', filledAiForm === true);
+    expect('可通过界面测试 AI 连接', await clickText('button', '测试连接') === true);
+    await waitFor('document.body.innerText.includes("连接已验证")', 'AI 连接成功状态');
+    const aiStatus = await rpcPost('get_ai_settings');
+    expect('连接成功状态已保存且首次授权仍待确认', aiStatus.configured && aiStatus.connectionTested && aiStatus.consentRequired);
+    expect('连接测试仅发送一个无持仓探针', aiRequests.length === 1 && aiRequests[0].probe && analysisCount() === 0);
+    expect('本地上游收到验证模型与哑 Key', aiRequests[0]?.authorized && aiRequests[0]?.payload.model === aiModel);
+
+    await clickNav('持仓');
+    await waitFor('[...document.querySelectorAll(".ops-cell button")].some(e => e.innerText.trim() === "AI 分析")', '配置后的持仓 AI 入口');
+    await clickText('.ops-cell button', 'AI 分析');
+    await waitFor('[...document.querySelectorAll(".modal button")].some(e => e.innerText.trim() === "确认发送并分析")', 'AI 首次外发确认');
+    const aiConsent = await evaluate('document.querySelector(".modal")?.innerText ?? ""');
+    expect('首次确认说明实际接收地址、模型与数据范围',
+      aiConsent.includes(aiBaseUrl) && aiConsent.includes(aiModel) && aiConsent.includes('PE/PB') && aiConsent.includes('不发送账户名'), aiConsent);
+    expect('首次确认前没有分析 RPC 或持仓外发', analysisRpcCount() === 0 && analysisCount() === 0);
+    const consentClicked = await evaluate(`(() => {
+      const button = [...document.querySelectorAll('.modal button')].find(e => e.innerText.trim() === '确认发送并分析');
+      if (!button) return false;
+      button.click(); button.click();
+      return true;
+    })()`);
+    expect('首次确认按钮可触发分析', consentClicked === true);
+    await waitFor('document.querySelector(".modal .ai-block")?.innerText.includes("浏览器验收结果")', 'AI 分析结果');
+    const aiOutput = await evaluate(`(() => ({
+      content: document.querySelector('.modal .ai-block')?.innerText ?? '',
+      model: document.querySelector('.modal .ai-model-chip')?.innerText ?? '',
+      note: document.querySelector('.modal .ai-note')?.innerText ?? '',
+    }))()`);
+    expect('重复点击确认只产生一次分析 RPC 和上游调用', analysisRpcCount() === 1 && analysisCount() === 1,
+      `rpc=${analysisRpcCount()} upstream=${analysisCount()}`);
+    expect('分析结果展示模型、正文和免责声明',
+      aiOutput.model.includes(aiModel) && aiOutput.content.includes('仅分析隔离验证持仓') && aiOutput.note.includes('不构成投资建议'));
+    const analysisRequest = aiRequests.find((request) => !request.probe);
+    let sentScope = null;
+    try { sentScope = JSON.parse(analysisRequest?.payload.messages?.find((message) => message.role === 'user')?.content); } catch { /* 后续断言给出失败 */ }
+    expect('上游只收到隔离持仓摘要且标记缺失估值', sentScope?.code === stock.code
+      && sentScope?.qty === '100' && Array.isArray(sentScope?.valuation)
+      && sentScope.valuation.some((metric) => metric.key === 'pe' && metric.status === 'MISSING')
+      && !JSON.stringify(sentScope).includes('验证账户'));
+    expect('确认后的授权状态已保存', (await rpcPost('get_ai_settings')).consentRequired === false);
+    expect('本地 AI 上游无协议错误', aiFixtureErrors.length === 0, aiFixtureErrors.join(' | '));
+    await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))');
+    await waitFor('!document.querySelector(".modal")', '关闭 AI 分析弹窗');
+
     const clicked = await evaluate(`(() => {
       const el = [...document.querySelectorAll('.nav-item')].find(e => e.innerText.includes('\\u6307\\u6570'));
       if (!el) return false; el.click(); return true;
@@ -378,6 +501,8 @@ async function browserChecks() {
         bodyRows: t.querySelectorAll('tbody tr').length,
         bodyCols: t.querySelectorAll('tbody tr:first-child td').length,
         groups: [...t.querySelectorAll('.idx-group')].map(e => e.innerText.trim()),
+        headers: t.querySelector('thead')?.innerText ?? '',
+        price: [...t.querySelectorAll('tbody tr')].find(e => e.querySelector('td')?.innerText.trim() === '000300')?.querySelectorAll('td')[3]?.innerText ?? '',
         sticky: getComputedStyle(t.querySelector('.idx-f2')).position,
         submenu: [...document.querySelectorAll('.idx-subitem')].length,
         ready: document.querySelector('.idx-ready')?.innerText.replace(/\\s+/g, ' ').slice(0, 100) ?? '',
@@ -388,8 +513,10 @@ async function browserChecks() {
       expect('页面标题为「指数」', info.title === '指数', String(info.title));
       expect('双层分组表头（2 行）', info.headerRows === 2, `rows=${info.headerRows}`);
       expect('表体 36 列高密度表格', info.bodyCols === 36, `cols=${info.bodyCols}`);
-      expect('分组含 PE-TTM / PB / PS / ROE',
-        ['PE-TTM', 'PB', 'PS', 'ROE'].every((g) => info.groups.includes(g)), JSON.stringify(info.groups));
+      expect('分组含 PE-TTM / PB / PS / ROE 年度观测',
+        ['PE-TTM', 'PB', 'PS', 'ROE 年度观测'].every((g) => info.groups.includes(g)), JSON.stringify(info.groups));
+      expect('点位列明确标为「最新点位」', info.headers.includes('最新点位') && !info.headers.includes('收盘点位'), info.headers);
+      expect('最新点位保留手工价格类型与实际日期', info.price.includes('手工价格') && info.price.includes(weekdays[weekdays.length - 1]), info.price);
       expect('左侧第二列 sticky 固定', info.sticky === 'sticky', String(info.sticky));
       expect('两行二级菜单已渲染', info.submenu >= 16, `count=${info.submenu}`);
       expect('结构预览行可见', info.bodyRows > 0, `rows=${info.bodyRows}`);
@@ -463,6 +590,7 @@ async function browserChecks() {
     try { ws?.close(); } catch { /* ignore */ }
     chrome.kill('SIGTERM');
     server.close();
+    for (const dispose of disposers.reverse()) { try { dispose(); } catch { /* 已释放 */ } }
   }
 }
 

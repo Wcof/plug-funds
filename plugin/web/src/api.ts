@@ -123,6 +123,9 @@ export interface CategoryLink { instrumentId: string; categoryId: string }
 
 export interface AiStatus {
   configured: boolean;
+  connectionTested: boolean;
+  consentRequired: boolean;
+  consentToken: string;
   masked: { baseUrl: string; apiKey: string; model: string; enabled: boolean };
   secretBackend: 'keychain' | 'sqlite';
   scope: string;

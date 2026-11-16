@@ -21,7 +21,7 @@ install_bundle target=<plugin/targets/dsh/investment 的绝对路径>
 ## 数据
 
 - 数据根：`~/.plug-funds/`，权威库 `data/invest.db`（SQLite WAL）。
-- 当前 `SCHEMA_VERSION = 3`；数据 schema 版本高于插件时拒绝打开（先升级插件，不降级写入）；迁移前自动备份。
+- 当前 `SCHEMA_VERSION = 4`；估值指标表使用 WITHOUT ROWID 复合主键。数据 schema 版本高于插件时拒绝打开（先升级插件，不降级写入）；迁移前自动备份。
 - 交易流水是唯一事实源，持仓为回放投影；金额 i64 定点（金额 2 位、份额/净值/价格 4 位，ROUND_DOWN）；交易以 `requestId` 幂等。
 - 流水导入支持 **CSV 与 .xlsx**（预览 / 错误行 / 单事务 / 失败整批回滚）；.xlsx 在自包含约束下自行解析 ZIP + XML，不装依赖；`.xls` 老格式请先另存为 .xlsx。
 - JSON 全量备份恢复（校验 / 预览 / 恢复前自动备份当前库 / 一致性检查）。
@@ -29,7 +29,7 @@ install_bundle target=<plugin/targets/dsh/investment 的绝对路径>
 
 ## 页面与接口
 
-- Host 同源托管 `GET /plug-funds/`（静态 SPA）与 `POST /plug-funds/api/rpc`（JSON-RPC 风格方法表，61 个方法）。
+- Host 同源托管 `GET /plug-funds/`（静态 SPA）与 `POST /plug-funds/api/rpc`（JSON-RPC 风格方法表）。
 - RPC 响应统一 `{ success, data, error, traceId }`；只接受同源 POST，响应 `Cache-Control: no-store`。
 - 错误码：`422 validation-error`（输入 / 外部数据校验失败）、`404 not-found`、账本冲突 `422`、schema 冲突 `409`、未知方法 `404 unknown-method`、程序故障 `500 internal-error`。
 - 「隐藏金额」只掩码展示类响应（含总资产 / 现金合计 / 覆盖市值）；导出 / 备份 / 配置 / AI / 导入 / 恢复等数据出口不受影响，导出的 JSON 始终含真实数值。
@@ -42,11 +42,12 @@ install_bundle target=<plugin/targets/dsh/investment 的绝对路径>
 ## 行情与 AI
 
 - **多源行情**：腾讯财经为主源（`qt.gtimg.cn` 实时 / `web.ifzq.gtimg.cn` K 线，覆盖 A 股 / ETF / 指数 / 港股 / 美股 / 场外基金最新净值），东财兜底（`push2` 报价与 K 线、`f10/lsjz` 与 `pingzhongdata` 场外基金净值、估值明细），手工价格保底。
-- 多源交叉校验：同一标的同一天两个来源相对差 >1% 时标记 `CONFLICT` 并保留双方记录，不擅自选一个当正确答案。
+- 多源交叉校验：同一标的、同一交易日、同一价格类型的两个来源相对差 >1% 时标记 `CONFLICT` 并保留双方记录，不擅自选一个当正确答案；不同日期或未经确认的估值口径不能直接判为冲突。
 - 有效价格统一口径 `MANUAL_PRICE > 当日 REALTIME > CLOSE / OFFICIAL_NAV`，同日多来源去重；`ESTIMATED_NAV` 不进入计价 / 表现指标序列。
-- 缺数据显示「— / 样本不足」，不静默填 0；PE / PB 历史分位样本 <20 不写。
-- 本机实测（2026-11-15）：腾讯、东财 `f10/lsjz`、`pingzhongdata` 可用；东财 `push2` / `push2his` 为 HTTP 000（网络环境相关），由腾讯主源承担；`fundgz` 盘中估算端点已下线（恒返回 404 页），估算链路当前不可用，不会写入伪造估值。
-- **AI 分析**：仅手动触发，OpenAI 兼容；Key 存系统钥匙串（macOS `security` / Linux `secret-tool`），SQLite 只留哨兵 `__keychain__`，钥匙串不可用时降级并在 `secretBackend` 如实上报；老库明文在启动时自动迁移。
+- 缺数据显示「— / 样本不足」，不静默填 0；PE / PB 分位以基础指标日期为终点，使用同源历史，至少需要 20 个有效样本与 180 天跨度。评分使用近 3 年分位；分位或基础指标过期、冲突、缺失或日期不一致时不参与当前评分。
+- **指数估值**优先使用中证指数官网 JSON：滚动 PE 历史、静态 PE、PB、股息率快照；XLS 为补充来源。已取得官方滚动 PE 的指数将其保存为 `pe`，报价 PE 留在 `pe_quote`，静态及股本口径另存。已接入 JSON 快照覆盖 8 只指数，其余 PB 缺口不代表所有公开来源均无数据；其他指数和字段按实际响应标注未覆盖、抓取失败或待核实，不推算。JSON 股息率主值与 XLS 两种股本口径分键留档，XLS 兜底须标明来源。
+- 公开行情接口的覆盖和连通性按本次请求结果记录；网络失败、WAF 拦截、空数组和解析失败分别处理。盘中估算接口未取得有效数据时保持缺失，估算不参与计价。
+- **AI 分析**：仅手动触发，OpenAI 兼容；先测试连接，首次分析须确认接收服务及外发范围，配置变化后重新测试和确认。提示词含持仓、权重分母以及价格和估值的日期、来源、质量；无效、拒绝或截断响应不保存为成功分析。当前为持仓文本分析，不含图片 OCR。Key 存系统钥匙串（macOS `security` / Linux `secret-tool`），SQLite 只留哨兵 `__keychain__`，钥匙串不可用时降级并在 `secretBackend` 如实上报；老库明文在启动时自动迁移。
 
 ## MCP（Zcode 等 MCP 宿主）
 
@@ -60,9 +61,9 @@ install_bundle target=<plugin/targets/dsh/investment 的绝对路径>
 
 ```bash
 npm install
-npm test                   # 162 个测试
+npm test                   # core / API / 行情 / AI / 数据审计回归
 npm run check              # 自包含校验（含 MCP 产物）+ web 产物静态断言 + 全部测试
-npm run verify:web         # web 静态断言 + 真实 Chrome CDP 渲染验证（69 项）
+npm run verify:web         # web 静态断言 + 真实 Chrome CDP 渲染与 AI 交互验证
 npm run pack:dsh           # 产物：integrations/dsh/dist/*.tgz
-npm run verify:install     # 解包 tarball + 安装契约（含 SPA 挂载 / 指数页 / MCP）+ 隔离 RPC（41 项，不写真实 ~/.dsh）
+npm run verify:install     # 解包 tarball + 安装契约（含 SPA 挂载 / 指数页 / MCP）+ 隔离 RPC（45 项，不写真实 ~/.dsh）
 ```

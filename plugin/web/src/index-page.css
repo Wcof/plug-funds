@@ -165,6 +165,19 @@
 }
 .idx-foot-more:hover { text-decoration: underline; }
 
+/* ---------- 行分页（目录导入后单表可达 500+ 行） ---------- */
+.idx-pager { display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.idx-page-btn {
+  border: 1px solid var(--border); background: var(--card); color: var(--text2);
+  border-radius: 6px; padding: 2px 8px; font-size: 11px; line-height: 1.6; cursor: pointer;
+}
+.idx-page-btn:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); }
+.idx-page-btn:disabled { opacity: .45; cursor: not-allowed; }
+.idx-page-size {
+  border: 1px solid var(--border); background: var(--card); color: var(--text2);
+  border-radius: 6px; padding: 2px 4px; font-size: 11px; line-height: 1.6;
+}
+
 /* ---------- 定义弹窗 ---------- */
 .idx-help-list { display: flex; flex-direction: column; gap: 0; margin: 6px 0 10px; }
 .idx-help-row {

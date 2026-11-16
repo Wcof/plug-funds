@@ -1,7 +1,7 @@
 /**
  * SPA 根：导航 + 弹窗编排（目标 / 修改分组 / 新增持仓 / 记一笔 / AI / PK）。
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './app.css';
 import { rpc, type AiAnalysis, type AiStatus, type CategoryRow, type CompareResult, type Goal, type Instrument } from './api.ts';
@@ -328,15 +328,39 @@ function AssignModal(props: { instrumentId: string; instrumentName: string; onCl
 /* ---------------- AI 分析弹窗 ---------------- */
 
 function AiModal(props: { positionId: string; onClose: () => void; onConfigure: () => void }) {
-  const [state, setState] = useState<{ kind: 'loading' } | { kind: 'error'; message: string; code?: string } | { kind: 'done'; result: AiAnalysis }>({ kind: 'loading' });
+  const [state, setState] = useState<{ kind: 'loading' | 'confirm' } | { kind: 'error'; message: string; code?: string } | { kind: 'done'; result: AiAnalysis }>({ kind: 'loading' });
   const [settings, setSettings] = useState<AiStatus | null>(null);
+  const generation = useRef(0);
+  const pending = useRef(false);
+
+  const analyze = useCallback(async (consent: boolean, current: number, consentToken?: string) => {
+    if (pending.current) return;
+    pending.current = true;
+    setState({ kind: 'loading' });
+    try {
+      const result = await rpc<AiAnalysis>('analyze_holding_with_ai', { positionId: props.positionId, consent, consentToken });
+      if (generation.current === current) setState({ kind: 'done', result });
+    } catch (e) {
+      if (generation.current === current) setState({ kind: 'error', message: (e as Error).message, code: (e as { code?: string }).code });
+    } finally { if (generation.current === current) pending.current = false; }
+  }, [props.positionId]);
 
   useEffect(() => {
-    void rpc<AiStatus>('get_ai_settings').then(setSettings);
-    void rpc<AiAnalysis>('analyze_holding_with_ai', { positionId: props.positionId })
-      .then((result) => setState({ kind: 'done', result }))
-      .catch((e) => setState({ kind: 'error', message: (e as Error).message, code: (e as { code?: string }).code }));
-  }, [props.positionId]);
+    const current = ++generation.current;
+    pending.current = false;
+    setState({ kind: 'loading' });
+    void rpc<AiStatus>('get_ai_settings').then((status) => {
+      if (generation.current !== current) return;
+      setSettings(status);
+      if (!status.configured || !status.connectionTested) {
+        setState({ kind: 'error', code: 'ai-not-tested', message: '请先保存 AI 配置并测试连接成功，再发起分析。' });
+      } else if (status.consentRequired) setState({ kind: 'confirm' });
+      else void analyze(false, current);
+    }).catch((e) => {
+      if (generation.current === current) setState({ kind: 'error', message: (e as Error).message });
+    });
+    return () => { generation.current += 1; };
+  }, [analyze]);
 
   return (
     <Modal width={580} title={`AI 分析 · ${state.kind === 'done' ? `${state.result.name} ${state.result.code}` : '持仓'}`} onClose={props.onClose}>
@@ -346,12 +370,19 @@ function AiModal(props: { positionId: string; onClose: () => void; onConfigure: 
         {settings && !settings.configured ? <span className="badge t-wait">未配置</span> : null}
       </div>
       {state.kind === 'loading' ? (
-        <div className="ai-loading"><span className="spinner" />正在将持仓摘要发送至所配置的 AI 服务分析…</div>
+        <div className="ai-loading"><span className="spinner" />{pending.current ? '正在发送持仓摘要并等待 AI 分析…' : '正在检查 AI 配置与授权状态…'}</div>
+      ) : null}
+      {state.kind === 'confirm' && settings ? (
+        <div>
+          <p>首次使用前，请确认向 {settings.masked.baseUrl} 的 {settings.masked.model} 模型发送以下数据。</p>
+          <p>{settings.scope}</p>
+          <button className="btn btn-primary" onClick={() => void analyze(true, generation.current, settings.consentToken)}>确认发送并分析</button>
+        </div>
       ) : null}
       {state.kind === 'error' ? (
         <div>
           <div className="empty" style={{ padding: '12px 0' }}>{state.message}</div>
-          {state.code === 'ai-not-configured' ? (
+          {['ai-not-configured', 'ai-not-tested'].includes(state.code ?? '') ? (
             <button className="btn btn-primary btn-sm" onClick={props.onConfigure}>前往 AI 配置</button>
           ) : null}
         </div>

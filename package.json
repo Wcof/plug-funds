@@ -1,7 +1,7 @@
 {
   "name": "plug-funds",
   "private": true,
-  "version": "0.1.3",
+  "version": "0.1.4",
   "license": "MIT",
   "type": "module",
   "description": "个人投资工作站 · DeepSeek Harness 插件（本地优先）",
@@ -11,7 +11,13 @@
     "check": "node plugin/scripts/build.mjs --check && node plugin/scripts/verify-web.mjs && node --test plugin/test/*.test.ts",
     "pack:dsh": "npm run build && node plugin/scripts/pack.mjs",
     "verify:install": "node plugin/scripts/verify-install.mjs",
-    "verify:web": "node plugin/scripts/verify-web.mjs --browser"
+    "verify:web": "node plugin/scripts/verify-web.mjs --browser",
+    "backfill:metrics": "node plugin/scripts/backfill-metrics.mjs",
+    "audit:metrics": "node plugin/scripts/audit-metrics.mjs",
+    "import:indices": "node plugin/scripts/import-index-catalog.mjs",
+    "refresh:indices": "node plugin/scripts/refresh-catalog.mjs",
+    "fill:dates": "node plugin/scripts/fill-index-dates.mjs",
+    "audit:indices": "node plugin/scripts/audit-index-data.mjs"
   },
   "engines": {
     "node": ">=22.13"
