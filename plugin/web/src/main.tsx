@@ -105,62 +105,64 @@ export function App() {
       </aside>
       <main>
         <div className="page">
-          {nav.page === 'dashboard' ? (
-            <DashboardPage
-              reloadKey={reloadKey}
-              onOpenPosDetail={(positionId) => setNav({ page: 'pos-detail', positionId })}
-              onOpenInstDetail={(instrumentId) => setNav({ page: 'inst-detail', instrumentId })}
-              onOpenGoalModal={(goal) => setGoalModal(goal ?? 'open')}
-              onOpenAi={setAiFor}
-              onOpenPk={setPkFor}
-              onToast={showToast}
-            />
-          ) : null}
-          {nav.page === 'holdings' ? (
-            <HoldingsPage
-              reloadKey={reloadKey}
-              onOpenPosDetail={(positionId) => setNav({ page: 'pos-detail', positionId })}
-              onOpenInstDetail={(instrumentId) => setNav({ page: 'inst-detail', instrumentId })}
-              onOpenAi={setAiFor}
-              onOpenPk={setPkFor}
-              onOpenAssign={(instrumentId, name) => setAssignFor({ instrumentId, name })}
-              onOpenAddPos={() => setAddPosOpen(true)}
-              onOpenTxn={() => setTxnOpen(true)}
-              onReload={reload}
-              onToast={showToast}
-            />
-          ) : null}
-          {nav.page === 'valuation' ? <ValuationPage reloadKey={reloadKey} instrumentId={null} onToast={showToast} /> : null}
-          {nav.page === 'index' ? (
-            <IndexPage
-              onToast={showToast}
-              onOpenInstDetail={(instrumentId) => setNav({ page: 'inst-detail', instrumentId })}
-            />
-          ) : null}
-          {nav.page === 'settings' ? <SettingsPage reloadKey={reloadKey} onReload={reload} onToast={showToast} /> : null}
-          {nav.page === 'pos-detail' && nav.positionId ? (
-            <PosDetailPage
-              positionId={nav.positionId}
-              reloadKey={reloadKey}
-              onBack={() => go('holdings')}
-              onOpenInstDetail={(instrumentId) => setNav({ page: 'inst-detail', instrumentId })}
-              onOpenAi={setAiFor}
-              onOpenPk={setPkFor}
-              onOpenAssign={(instrumentId, name) => setAssignFor({ instrumentId, name })}
-              onToast={showToast}
-              onReload={reload}
-            />
-          ) : null}
-          {nav.page === 'inst-detail' && nav.instrumentId ? (
-            <InstDetailPage
-              instrumentId={nav.instrumentId}
-              reloadKey={reloadKey}
-              onBack={() => go('holdings')}
-              onOpenPosDetail={(positionId) => setNav({ page: 'pos-detail', positionId })}
-              onOpenAi={setAiFor}
-              onToast={showToast}
-            />
-          ) : null}
+          <PageBoundary pageKey={nav.page} onReset={() => go('dashboard')}>
+            {nav.page === 'dashboard' ? (
+              <DashboardPage
+                reloadKey={reloadKey}
+                onOpenPosDetail={(positionId) => setNav({ page: 'pos-detail', positionId })}
+                onOpenInstDetail={(instrumentId) => setNav({ page: 'inst-detail', instrumentId })}
+                onOpenGoalModal={(goal) => setGoalModal(goal ?? 'open')}
+                onOpenAi={setAiFor}
+                onOpenPk={setPkFor}
+                onToast={showToast}
+              />
+            ) : null}
+            {nav.page === 'holdings' ? (
+              <HoldingsPage
+                reloadKey={reloadKey}
+                onOpenPosDetail={(positionId) => setNav({ page: 'pos-detail', positionId })}
+                onOpenInstDetail={(instrumentId) => setNav({ page: 'inst-detail', instrumentId })}
+                onOpenAi={setAiFor}
+                onOpenPk={setPkFor}
+                onOpenAssign={(instrumentId, name) => setAssignFor({ instrumentId, name })}
+                onOpenAddPos={() => setAddPosOpen(true)}
+                onOpenTxn={() => setTxnOpen(true)}
+                onReload={reload}
+                onToast={showToast}
+              />
+            ) : null}
+            {nav.page === 'valuation' ? <ValuationPage reloadKey={reloadKey} instrumentId={null} onToast={showToast} /> : null}
+            {nav.page === 'index' ? (
+              <IndexPage
+                onToast={showToast}
+                onOpenInstDetail={(instrumentId) => setNav({ page: 'inst-detail', instrumentId })}
+              />
+            ) : null}
+            {nav.page === 'settings' ? <SettingsPage reloadKey={reloadKey} onReload={reload} onToast={showToast} /> : null}
+            {nav.page === 'pos-detail' && nav.positionId ? (
+              <PosDetailPage
+                positionId={nav.positionId}
+                reloadKey={reloadKey}
+                onBack={() => go('holdings')}
+                onOpenInstDetail={(instrumentId) => setNav({ page: 'inst-detail', instrumentId })}
+                onOpenAi={setAiFor}
+                onOpenPk={setPkFor}
+                onOpenAssign={(instrumentId, name) => setAssignFor({ instrumentId, name })}
+                onToast={showToast}
+                onReload={reload}
+              />
+            ) : null}
+            {nav.page === 'inst-detail' && nav.instrumentId ? (
+              <InstDetailPage
+                instrumentId={nav.instrumentId}
+                reloadKey={reloadKey}
+                onBack={() => go('holdings')}
+                onOpenPosDetail={(positionId) => setNav({ page: 'pos-detail', positionId })}
+                onOpenAi={setAiFor}
+                onToast={showToast}
+              />
+            ) : null}
+          </PageBoundary>
         </div>
       </main>
 
@@ -197,6 +199,43 @@ export function App() {
       {toastNode}
     </div>
   );
+}
+
+/* ---------------- 页面级错误边界 ---------------- */
+
+/**
+ * 任一页面在渲染期抛错时，React 18 会卸载整棵树 → 用户只看到一片空白，
+ * 侧栏、返回入口全部消失，无法自救。这里把错误收敛到内容区并给出显式信息。
+ * 切换页面时自动复位，避免一次崩溃永久卡住。
+ */
+class PageBoundary extends React.Component<
+  { pageKey: string; onReset: () => void; children: React.ReactNode },
+  { error: Error | null }
+> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error): { error: Error } {
+    return { error };
+  }
+
+  componentDidUpdate(previous: { pageKey: string }): void {
+    if (previous.pageKey !== this.props.pageKey && this.state.error) this.setState({ error: null });
+  }
+
+  render(): React.ReactNode {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className="page-error">
+        <h1>页面渲染失败</h1>
+        <div className="page-error-msg">{this.state.error.message || String(this.state.error)}</div>
+        <div className="page-error-hint">数据仍保存在本机，本次只影响当前页面的显示。</div>
+        <div className="page-error-actions">
+          <button className="btn" onClick={() => this.setState({ error: null })}>重试</button>
+          <button className="btn btn-primary" onClick={this.props.onReset}>返回总览</button>
+        </div>
+      </div>
+    );
+  }
 }
 
 /* ---------------- 目标设置弹窗 ---------------- */

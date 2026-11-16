@@ -46,7 +46,7 @@ import { getPortfolioRisk, getCorrelationMatrix, saveRiskFreeRate } from './serv
 import { listCashAccounts, saveCashAccount, deleteCashAccount } from './repo/cash.ts';
 import { getRebalancePlan, saveRebalanceTargets, listRebalanceTargets } from './services/rebalance.ts';
 
-const APP_VERSION = '0.1.1';
+const APP_VERSION = '0.1.2';
 
 /* ---------------- DASH-12 金额掩码 ---------------- */
 
@@ -347,6 +347,8 @@ const HANDLERS: Record<string, (ctx: ServiceContext, params: Record<string, unkn
   },
   get_holdings_valuation: (ctx, params) => getHoldingsValuation(ctx, {
     type: typeof params.type === 'string' && params.type !== 'all' ? params.type : undefined,
+    // 估值页要「全部标的」；总览 / 持仓页保持只出持仓的原有口径。
+    scope: params.scope === 'all' ? 'all' : 'holdings',
   }),
   analyze_holding_with_ai: async (ctx, params) => analyzeHolding(ctx, str(params.positionId)),
   get_ai_settings: (ctx) => getAiStatus(ctx),

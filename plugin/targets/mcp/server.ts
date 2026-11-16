@@ -15,7 +15,7 @@ import { todayLocal } from '../../server/src/ids.ts';
 import type { ServiceContext } from '../../server/src/context.ts';
 
 const SERVER_NAME = 'plug-funds';
-const SERVER_VERSION = '0.1.1';
+const SERVER_VERSION = '0.1.2';
 const PROTOCOL_VERSION = '2024-11-05';
 
 interface ToolDef {

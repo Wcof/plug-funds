@@ -13,6 +13,7 @@ import { createRegistry } from '../server/src/market/provider.ts';
 import { dispatch, listRpcMethods } from '../server/src/api.ts';
 import { RPC_METHODS } from '../core/src/rpc.ts';
 import { effectiveHistoryPoints, saveMarketPoints, saveValuationMetric } from '../server/src/repo/market.ts';
+import { saveInstrument } from '../server/src/repo/instruments.ts';
 import { isTradingHours } from '../server/src/repo/refresh-settings.ts';
 import type { ServiceContext } from '../server/src/context.ts';
 import type { MarketPoint, Txn } from '../core/src/types.ts';
@@ -324,4 +325,48 @@ test('输入错误分类：CSV 表头 / 模板权重 → 422，资源不存在 �
   const missing = await dispatch(ctx, 'get_position_detail', { positionId: '不存在:不存在' });
   assert.equal(missing.status, 404);
   assert.equal(missing.envelope.error?.code, 'not-found');
+});
+
+test('估值视图 scope=all：没有持仓的标的也会出现，缺指标显示数据不足且不填 0', async () => {
+  const { instrumentId } = await seedPosition();
+  saveMarketPoints(handle, priceHistory(instrumentId, 30));
+  // 只建标的、不建持仓：模拟「导入常用指数」后的状态（指数页 bootstrap 的产品逻辑）。
+  const index = await rpc<{ id: string }>('save_instrument', { code: '000300', name: '沪深300', type: 'INDEX', market: 'SH', secid: '1.000300' });
+  saveMarketPoints(handle, priceHistory(index.id, 30));
+
+  const holdingsOnly = await rpc<{ rows: { code: string; held: boolean }[]; scope: string; total: number }>('get_holdings_valuation');
+  assert.equal(holdingsOnly.scope, 'holdings', '缺省口径必须仍是「仅持仓」，总览 / 持仓页行为不变');
+  assert.deepEqual(holdingsOnly.rows.map((row) => row.code), ['600036']);
+
+  const all = await rpc<{
+    rows: { code: string; held: boolean; type: string; volatilityPct: number | null; strategies: { total: number | null }[] }[];
+    scope: string;
+    total: number;
+  }>('get_holdings_valuation', { scope: 'all' });
+  assert.equal(all.scope, 'all');
+  assert.equal(all.total, 2);
+  assert.equal(all.rows.length, 2, '全部标的都要出现，不能因为没有持仓被过滤掉');
+  assert.equal(all.rows[0].code, '600036', '持仓标的排在前面');
+  const indexRow = all.rows.find((row) => row.code === '000300')!;
+  assert.equal(indexRow.held, false);
+  assert.equal(indexRow.type, 'INDEX');
+  assert.ok(indexRow.strategies.length > 0, '指数也要有可展开的评分行');
+  assert.ok(indexRow.strategies.every((strategy) => strategy.total === null), '只有价格没有估值指标时必须是「数据不足」，绝不填 0');
+  assert.ok(indexRow.volatilityPct !== null, '风险指标直接来自库内价格序列，不依赖外部数据源');
+
+  // 类型筛选在 all 口径下同样生效
+  const onlyIndex = await rpc<{ rows: { code: string }[] }>('get_holdings_valuation', { scope: 'all', type: 'INDEX' });
+  assert.deepEqual(onlyIndex.rows.map((row) => row.code), ['000300']);
+});
+
+test('估值视图：停用标的从 scope=all 中排除', async () => {
+  const { instrumentId } = await seedPosition();
+  await rpc('save_instrument', { code: '510300', name: '沪深300ETF', type: 'ETF', market: 'SH', secid: '1.510300' });
+  saveInstrument(handle, { id: instrumentId, code: '600036', name: '招商银行', type: 'STOCK', market: 'SH', active: false });
+
+  const all = await rpc<{ rows: { code: string }[]; total: number }>('get_holdings_valuation', { scope: 'all' });
+  const codes = all.rows.map((row) => row.code);
+  assert.ok(codes.includes('510300'));
+  assert.ok(!codes.includes('600036'), '停用标的不进入全部标的列表');
+  assert.equal(all.total, all.rows.length);
 });

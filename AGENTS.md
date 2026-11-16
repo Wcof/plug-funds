@@ -58,17 +58,19 @@ plugin/
 - **估算净值**：`fundgz` 端点已下线（恒返回 404 HTML），`parseFundGz` 解析失败返回 `null`，不得回填任何猜测值。
 - **「指数」页边界**：只复刻 `touzid.com/indice/#/6` 的结构 / 样式 / 交互；数值只取本机 `type=INDEX` 标的的 `valuation_metrics` / `market_points`，绝不复制第三方真实行情；无数据时必须用「结构预览」显式标注且数值列恒为「—」；参考页成分股聚合口径仅作标注，不声称等价实现；数据源未覆盖的视图（互联互通 / 两融）必须写明「需要什么数据」，不得填 0。
 - **指数页首次可用**：进入指数页且本机无 INDEX 标的 / 无任何收盘点位时，前端自动调 `bootstrap_indices`（建 8 个常用宽基指数 + 立刻拉一次真实行情）。该入口只写标的元数据（代码 / 名称 / secid），价格与估值一律由 `refresh_market_data` 从数据源拉取；单个标的失败只回传原因，禁止填 0 或伪造数值，也不得把「自动建标的」做成静默的后台预填。
+- **估值页要列全部标的**：`get_holdings_valuation` 的 `scope` 决定口径——`holdings`（默认，总览 / 持仓页用）只出持仓；`all`（估值页用）出全部 `active` 标的并按「持仓优先」排序。缺指标的行必须留在列表里显示「数据不足」，不许因为没有持仓 / 没有 PE 就把它过滤掉；风险指标直接读库内 `effectiveHistoryPoints`，不要为了拿波动率去调 `getInstrumentChartSeries`（那会为每只标的重放一遍全部流水）。
+- **页面渲染不能整站白屏**：前端任何一页在渲染期抛错，React 18 会卸载整棵树，用户只看到空白且侧栏一起消失。`main.tsx` 的 `PageBoundary` 兜住这种情况并显示错误正文；新增页面若出现「点开就是白屏」，先查渲染期异常（典型如 `useCallback` / `useEffect` 依赖数组里写了作用域外的变量——`[range]` 写进 `ValuationPage` 就是这个坑，esbuild 不报错，只有浏览器里崩）。`npm run verify:web` 已加断言：点「估值」「设置」必须出内容且全程不出现错误横幅。
 - **钥匙串**：AI Key 优先存系统钥匙串，SQLite 只留 `__keychain__` 哨兵；不可用时降级并在 `secretBackend` 如实上报，不得静默假装已加密。测试用 `PLUG_FUNDS_DISABLE_KEYCHAIN=1` 关闭。
 
 ## 验证入口
 
 ```bash
-npm test                      # 162 个测试
+npm test                      # 167 个测试
 npm run check                 # 自包含校验（含 MCP 产物）+ web 产物静态断言 + 全部测试
 node plugin/scripts/smoke.mjs # E2E 冒烟（隔离状态目录 + 真实 HTTP 全链路，21 项）
 npm run pack:dsh              # 构建 + 打包 tarball → integrations/dsh/dist/
-npm run verify:install        # 解包 tarball + 安装契约（SPA 挂载 / 指数页 / MCP）+ 隔离 RPC（41 项）
-npm run verify:web            # web 静态断言 + 真实 Chrome CDP 渲染（69 项）
+npm run verify:install        # 解包 tarball + 安装契约（SPA 挂载 / 指数页 / MCP）+ 隔离 RPC（45 项）
+npm run verify:web            # web 静态断言 + 真实 Chrome CDP 渲染（86 项）
 node plugin/scripts/verify-web.mjs  # 仅静态层（无需 Chrome，可进 CI）
 ```
 
@@ -78,5 +80,5 @@ node plugin/scripts/verify-web.mjs  # 仅静态层（无需 Chrome，可进 CI�
 
 - 改 core / server 后必须 `npm test`；改 web / targets 后必须 `npm run check` **并** `npm run verify:web`（真实浏览器渲染，防止 bundle 存在但页面空白）。
 - 修改 `plugin/targets/dsh/host/glue.ts` 时对照 ADR-0048 禁止事项，不放宽。
-- `.tmp/` 为临时文件区；构建产物（index.js / web/ / mcp/index.js / dist/）不入库。
+- `.tmp/` 为临时文件区；`integrations/dsh/dist/` 不入库。**DSH 组合包产物（`index.js` / `web/` / `mcp/index.js`）必须随仓库提交**——宿主从 git 安装时不执行构建，缺产物装不起来（见 `.gitignore` 注释）。
 - 不 commit / push / 发布 npm —— 用户明确要求提交时才执行。

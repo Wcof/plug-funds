@@ -238,6 +238,9 @@ tr.rowlink { cursor: pointer; user-select: none; }
 .val-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .vchip { border: 1px solid var(--border); background: var(--card); border-radius: 16px; padding: 3px 12px; font-size: 12px; color: var(--text2); cursor: pointer; font-family: inherit; }
 .vchip.active { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
+.val-held-toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text2); cursor: pointer; user-select: none; }
+.val-gap { font-size: 12px; line-height: 1.75; color: var(--text2); background: var(--amber-bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px; margin-bottom: 10px; }
+.val-gap b { color: var(--amber); font-weight: 600; }
 .score-na { font-size: 12.5px; color: var(--text3); font-weight: 600; }
 .expand-cell { background: var(--gray-bg); padding: 12px 16px; }
 .kr-table { width: 100%; font-size: 12px; margin-bottom: 8px; }
@@ -305,6 +308,13 @@ tr.expanded .caret svg { transform: rotate(180deg); }
 .toast { position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%) translateY(10px); background: var(--text); color: var(--bg); font-size: 12.5px; border-radius: 9px; padding: 8px 17px; opacity: 0; pointer-events: none; transition: .2s; z-index: 200; max-width: 80vw; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .empty { color: var(--text3); text-align: center; padding: 26px 0; font-size: 12.5px; line-height: 1.8; }
+
+/* 页面级错误边界：渲染崩溃时给出显式信息，而不是整站白屏 */
+.page-error { max-width: 620px; margin: 60px auto; padding: 22px 24px; background: var(--card); border: 1px solid var(--border); border-radius: 10px; }
+.page-error h1 { font-size: 16px; margin: 0 0 10px; color: var(--text); }
+.page-error-msg { font-size: 12.5px; line-height: 1.7; color: var(--up); background: var(--bg); border: 1px solid var(--border2); border-radius: 6px; padding: 9px 11px; word-break: break-word; }
+.page-error-hint { font-size: 12px; color: var(--text3); margin: 10px 0 14px; }
+.page-error-actions { display: flex; gap: 8px; }
 
 @media (max-width: 1100px) {
   .metric-row { grid-template-columns: repeat(3, 1fr); }

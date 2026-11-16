@@ -98,6 +98,8 @@ export interface StrategyScore {
 }
 export interface ValuationRow {
   instrumentId: string; code: string; name: string; type: string;
+  /** 是否在当前持仓中（估值页用它排序并打「持仓」标记，不作为筛选开关）。 */
+  held: boolean;
   pe: string | null; pePercentile: number | null; pb: string | null; pbPercentile: number | null;
   dividendYield: string | null; roe: string | null;
   sharpe: number | null; volatilityPct: number | null; maxDrawdownPct: number | null;

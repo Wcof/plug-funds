@@ -826,23 +826,54 @@ export function HoldingsPage(props: {
 
 export function ValuationPage(props: { reloadKey: number; instrumentId: string | null; onToast: (message: string) => void }) {
   const [rows, setRows] = useState<ValuationRow[] | null>(null);
-  const [filter, setFilter] = useState('全部');
+  const [total, setTotal] = useState(0);
+  const [typeFilter, setTypeFilter] = useState('全部');
+  const [heldOnly, setHeldOnly] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [templates, setTemplates] = useState<{ id: string; name: string }[]>([]);
 
   const load = useCallback(async () => {
     const [valuation, templateResult] = await Promise.all([
-      rpc<{ rows: ValuationRow[] }>('get_holdings_valuation'),
+      // scope=all：估值页列全部在库标的（含指数 / 无持仓的观察标的），
+      // 没有持仓也能看到；缺指标的行显示「数据不足」，不会从列表里消失。
+      rpc<{ rows: ValuationRow[]; total: number }>('get_holdings_valuation', { scope: 'all' }),
       rpc<{ templates: { id: string; name: string }[] }>('list_strategy_templates'),
     ]);
     setRows(valuation.rows);
+    setTotal(typeof valuation.total === 'number' ? valuation.total : valuation.rows.length);
     setTemplates(templateResult.templates);
-  }, [range]);
+    // 依赖必须只含真实存在的变量：曾误写成 [range]（range 只存在于 DashboardPage 作用域），
+    // 渲染期求值依赖数组会抛 ReferenceError，整棵 React 树卸载 → 页面整站白屏。
+  }, []);
 
   useEffect(() => { void load(); }, [load, props.reloadKey]);
 
-  const groups = ['全部', ...templates.map((t) => t.name)];
-  const filtered = (rows ?? []).filter((row) => filter === '全部' || row.strategies.some((s) => s.templateName === filter));
+  const source = rows ?? [];
+  const TYPE_GROUPS: { key: string; label: string }[] = [
+    { key: '全部', label: '全部' },
+    { key: 'STOCK', label: '股票' },
+    { key: 'ETF', label: 'ETF' },
+    { key: 'OPEN_END_FUND', label: '场外基金' },
+    { key: 'INDEX', label: '指数' },
+  ];
+  const countOf = (key: string): number => (key === '全部' ? source.length : source.filter((row) => row.type === key).length);
+  const filtered = source.filter((row) => (typeFilter === '全部' || row.type === typeFilter) && (!heldOnly || row.held));
+  const scored = filtered.filter((row) => row.strategies.some((strategy) => strategy.total !== null)).length;
+  // 缺口聚合：全是「数据不足」时告诉用户缺的到底是什么、怎么补，而不是让人以为页面没修好。
+  const gaps = (() => {
+    const map = new Map<string, { label: string; count: number }>();
+    for (const row of filtered) {
+      for (const strategy of row.strategies) {
+        for (const metric of strategy.metrics) {
+          if (metric.status !== 'missing') continue;
+          const hit = map.get(metric.key) ?? { label: metric.label, count: 0 };
+          hit.count += 1;
+          map.set(metric.key, hit);
+        }
+      }
+    }
+    return [...map.values()].sort((a, b) => b.count - a.count).slice(0, 3);
+  })();
 
   return (
     <div>
@@ -850,6 +881,11 @@ export function ValuationPage(props: { reloadKey: number; instrumentId: string |
         <div>
           <h1>估值</h1>
           <div className="update-line">策略评分 = 规则匹配度 0–100，不代表涨跌概率或收益预测；模板可编辑、按版本留痕；缺失指标显示「数据不足」，可手工补录（MANUAL）</div>
+          <div className="update-line">
+            全部标的 <b className="num">{total}</b> 只 · 当前筛选 <b className="num">{filtered.length}</b> 只 · 可评分 <b className="num">{scored}</b> 只
+            <span className="sep">·</span>策略模板 <b className="num">{templates.length}</b> 个
+            <span className="badge t-real" style={{ marginLeft: 6 }}>含非持仓标的</span>
+          </div>
         </div>
       </header>
       <div className="val-layout">
@@ -857,13 +893,32 @@ export function ValuationPage(props: { reloadKey: number; instrumentId: string |
           <StrategyTemplatePanel onChanged={() => void load()} onToast={props.onToast} />
         </div>
         <div>
-          <div className="val-head-row" style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
+          <div className="val-head-row" style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <div className="val-chips">
-              {groups.map((group) => (
-                <button key={group} className={`vchip${filter === group ? ' active' : ''}`} onClick={() => setFilter(group)}>{group}</button>
+              {TYPE_GROUPS.map((group) => (
+                <button
+                  key={group.key}
+                  className={`vchip${typeFilter === group.key ? ' active' : ''}`}
+                  onClick={() => setTypeFilter(group.key)}
+                >
+                  {group.label}<span style={{ opacity: 0.6, marginLeft: 4 }}>{countOf(group.key)}</span>
+                </button>
               ))}
             </div>
+            <label className="val-held-toggle">
+              <input type="checkbox" checked={heldOnly} onChange={(e) => setHeldOnly(e.target.checked)} />
+              仅持仓
+            </label>
           </div>
+          {filtered.length > 0 && scored === 0 && gaps.length > 0 ? (
+            <div className="val-gap">
+              当前筛选下 {filtered.length} 只标的都还没达到评分条件。主要缺口：
+              {gaps.map((gap, i) => (
+                <React.Fragment key={gap.label}>{i > 0 ? ' · ' : ''}<b>{gap.label} ×{gap.count}</b></React.Fragment>
+              ))}
+              。分位类指标要按日累积 ≥20 个历史估值截面才会计算，持续刷新即可补齐；也可在标的详情页手工补录（标注 MANUAL）。
+            </div>
+          ) : null}
           <div className="card" style={{ paddingTop: 6 }}>
             <table className="opp-table">
               <thead>
@@ -885,7 +940,11 @@ export function ValuationPage(props: { reloadKey: number; instrumentId: string |
                             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M6 9l6 6 6-6" /></svg>
                           </button>
                         </td>
-                        <td><span className="inst-name">{row.name}</span><span className="inst-code">{row.code}</span></td>
+                        <td>
+                          <span className="inst-name">{row.name}</span>
+                          <span className="inst-code">{row.code}</span>
+                          {row.held ? <span className="badge t-nav" style={{ marginLeft: 5 }}>持仓</span> : null}
+                        </td>
                         <td style={{ color: 'var(--text2)' }}>{strategy.templateName}</td>
                         <td className="num">
                           {strategy.total === null
@@ -920,7 +979,15 @@ export function ValuationPage(props: { reloadKey: number; instrumentId: string |
                     </React.Fragment>
                   );
                 }))}
-                {filtered.length === 0 ? <tr><td colSpan={6}><div className="empty">暂无可评分的持仓（新增持仓并刷新行情后出现）</div></td></tr> : null}
+                {filtered.length === 0 ? (
+                  <tr><td colSpan={6}><div className="empty">
+                    {heldOnly
+                      ? '开启「仅持仓」后没有标的：取消勾选即可看到全部标的。'
+                      : source.length === 0
+                        ? '还没有任何标的。到「指数」页导入常用指数，或在持仓页新增持仓后，这里会自动出现全部标的。'
+                        : '当前类别下没有标的：切换到「全部」查看。'}
+                  </div></td></tr>
+                ) : null}
               </tbody>
             </table>
           </div>
@@ -962,7 +1029,7 @@ export function SettingsPage(props: { reloadKey: number; onReload: () => void; o
     setAiKey(aiResult.masked.apiKey);
     setRefresh(refreshResult);
     setRefreshInterval(String(refreshResult.settings.intervalSec));
-  }, [range]);
+  }, []);
 
   useEffect(() => { void load(); }, [load, props.reloadKey]);
 

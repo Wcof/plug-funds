@@ -3953,54 +3953,75 @@ function metricNumber(metrics, key) {
   const parsed = Number(row.value);
   return Number.isFinite(parsed) ? parsed : null;
 }
+function oneYearSpan(today) {
+  const begin = /* @__PURE__ */ new Date(`${today}T00:00:00Z`);
+  begin.setUTCDate(begin.getUTCDate() - 365);
+  return { begin: begin.toISOString().slice(0, 10), end: today };
+}
+function riskStats(ctx, instrument) {
+  try {
+    const span = oneYearSpan(ctx.today);
+    const points = effectiveHistoryPoints(ctx.handle, instrument.id, instrument.type, span.begin, span.end);
+    if (points.length < 20) return { sharpe: null, vol: null, mdd: null };
+    const series = points.map((p) => ({ date: p.tradingDate, value: p.value }));
+    return seriesStats(series);
+  } catch {
+    return { sharpe: null, vol: null, mdd: null };
+  }
+}
+function caliberFor(instrument, metrics, pe) {
+  const asOf = metrics[0]?.asOfDate;
+  const isFund = instrument.type === "OPEN_END_FUND";
+  const isEtf = instrument.type === "ETF";
+  const hasIndexLink = Boolean(instrument.benchmarkIndex);
+  let caliber;
+  if (instrument.type === "STOCK") {
+    caliber = `\u4E2A\u80A1 PE-TTM / PB \xB7 ${asOf ?? "\u6682\u65E0\u62AB\u9732"}`;
+  } else if (instrument.type === "INDEX") {
+    caliber = asOf ? `\u6307\u6570\u4F30\u503C\u622A\u9762 \xB7 ${asOf}` : "\u6307\u6570\u4F30\u503C\u622A\u9762 \xB7 \u6682\u65E0\u6570\u636E";
+  } else if (isFund && !hasIndexLink && pe === null) {
+    caliber = "\u4E3B\u52A8\u57FA\u91D1 \xB7 \u6301\u4ED3\u62AB\u9732\u6EDE\u540E\uFF08\u5B63\u62A5\uFF09\uFF0C\u4E0D\u63D0\u4F9B\u5B9E\u65F6\u7A7F\u900F\u4F30\u503C";
+  } else if ((isFund || isEtf) && hasIndexLink) {
+    caliber = `\u8DDF\u8E2A\u6307\u6570\u7A7F\u900F\uFF08${instrument.benchmarkIndex}\uFF09\xB7 ${asOf ?? "\u2014"}`;
+  } else {
+    caliber = asOf ? `\u4F30\u503C\u622A\u9762 ${asOf}` : "\u6682\u65E0\u4F30\u503C\u6570\u636E";
+  }
+  const manualCount = metrics.filter((m2) => m2.provider === "manual").length;
+  if (manualCount > 0) caliber += ` \xB7 \u542B ${manualCount} \u9879\u624B\u5DE5\u8865\u5F55\uFF08MANUAL\uFF09`;
+  return caliber;
+}
 async function getHoldingsValuation(ctx, filter = {}) {
+  const scope = filter.scope === "all" ? "all" : "holdings";
   const holdings = listHoldings(ctx);
-  const instruments = new Map(listInstruments(ctx.handle).map((i) => [i.id, i]));
+  const heldIds = new Set(holdings.rows.map((row) => row.instrumentId));
+  const everyInstrument = listInstruments(ctx.handle);
+  const byId = new Map(everyInstrument.map((instrument) => [instrument.id, instrument]));
   const templates = listTemplates(ctx.handle);
+  const targets = [];
+  if (scope === "all") {
+    for (const instrument of everyInstrument) {
+      if (!instrument.active) continue;
+      targets.push({ instrument, held: heldIds.has(instrument.id) });
+    }
+    targets.sort((a, b) => a.held === b.held ? 0 : a.held ? -1 : 1);
+  } else {
+    for (const row of holdings.rows) {
+      const instrument = byId.get(row.instrumentId) ?? getInstrument(ctx.handle, row.instrumentId);
+      if (instrument) targets.push({ instrument, held: true });
+    }
+  }
   const rows = [];
-  for (const holding of holdings.rows) {
-    if (filter.type && holding.type !== filter.type) continue;
-    const instrument = instruments.get(holding.instrumentId);
-    if (!instrument) continue;
+  for (const { instrument, held } of targets) {
+    if (filter.type && instrument.type !== filter.type) continue;
     const metrics = latestValuationMetrics(ctx.handle, instrument.id);
     const lite = metrics.map((m2) => ({ key: m2.metricKey, value: m2.value, asOfDate: m2.asOfDate, provider: m2.provider }));
-    let sharpe = null;
-    let vol = null;
-    let mdd = null;
-    try {
-      const chart = await getInstrumentChartSeries(ctx, {
-        instrumentId: instrument.id,
-        tab: "perf",
-        period: "1y",
-        compare: "none"
-      });
-      const stats = seriesStats(chart.series);
-      sharpe = stats.sharpe;
-      vol = stats.vol;
-      mdd = stats.mdd;
-    } catch {
-    }
+    const stats = riskStats(ctx, instrument);
     const pe = metricNumber(lite, "pe");
     const pb = metricNumber(lite, "pb");
     const pePct = metricNumber(lite, "pe_percentile");
     const pbPct = metricNumber(lite, "pb_percentile");
     const dy = metricNumber(lite, "dividend_yield");
     const roe = metricNumber(lite, "roe");
-    const isFund = instrument.type === "OPEN_END_FUND";
-    const isEtf = instrument.type === "ETF";
-    const hasIndexLink = Boolean(instrument.benchmarkIndex);
-    let caliber;
-    if (instrument.type === "STOCK") {
-      caliber = `${metrics.length > 0 ? `\u4E2A\u80A1 PE-TTM / PB \xB7 ${metrics[0].asOfDate}` : "\u4E2A\u80A1 PE-TTM / PB"}`;
-    } else if (isFund && !hasIndexLink && pe === null) {
-      caliber = "\u4E3B\u52A8\u57FA\u91D1 \xB7 \u6301\u4ED3\u62AB\u9732\u6EDE\u540E\uFF08\u5B63\u62A5\uFF09\uFF0C\u4E0D\u63D0\u4F9B\u5B9E\u65F6\u7A7F\u900F\u4F30\u503C";
-    } else if ((isFund || isEtf) && hasIndexLink) {
-      caliber = `\u8DDF\u8E2A\u6307\u6570\u7A7F\u900F\uFF08${instrument.benchmarkIndex}\uFF09\xB7 ${metrics[0]?.asOfDate ?? "\u2014"}`;
-    } else {
-      caliber = metrics.length > 0 ? `\u4F30\u503C\u622A\u9762 ${metrics[0].asOfDate}` : "\u6682\u65E0\u4F30\u503C\u6570\u636E";
-    }
-    const manualCount = lite.filter((m2) => m2.provider === "manual").length;
-    if (manualCount > 0) caliber += ` \xB7 \u542B ${manualCount} \u9879\u624B\u5DE5\u8865\u5F55\uFF08MANUAL\uFF09`;
     const metricValues = [
       { key: "pe", value: pe },
       { key: "pb", value: pb },
@@ -4008,9 +4029,9 @@ async function getHoldingsValuation(ctx, filter = {}) {
       { key: "pb_percentile", value: pbPct },
       { key: "dividend_yield", value: dy },
       { key: "roe", value: roe },
-      { key: "sharpe", value: sharpe },
-      { key: "max_drawdown_pct", value: mdd === null ? null : mdd * 100 },
-      { key: "annual_volatility_pct", value: vol === null ? null : vol * 100 }
+      { key: "sharpe", value: stats.sharpe },
+      { key: "max_drawdown_pct", value: stats.mdd === null ? null : stats.mdd * 100 },
+      { key: "annual_volatility_pct", value: stats.vol === null ? null : stats.vol * 100 }
     ];
     const applicable = templates.filter((template) => template.origin === "custom" || (instrument.type === "STOCK" ? template.id === "stock-value" : template.id !== "stock-value"));
     const strategies = applicable.map((template) => scoreWithTemplate(template, metricValues));
@@ -4019,22 +4040,25 @@ async function getHoldingsValuation(ctx, filter = {}) {
       code: instrument.code,
       name: instrument.name,
       type: instrument.type,
+      held,
       pe: pe === null ? null : String(pe),
       pePercentile: pePct,
       pb: pb === null ? null : String(pb),
       pbPercentile: pbPct,
       dividendYield: dy === null ? null : `${dy}%`,
       roe: roe === null ? null : `${roe}%`,
-      sharpe,
-      volatilityPct: vol === null ? null : vol * 100,
-      maxDrawdownPct: mdd === null ? null : mdd * 100,
-      caliber,
+      sharpe: stats.sharpe,
+      volatilityPct: stats.vol === null ? null : stats.vol * 100,
+      maxDrawdownPct: stats.mdd === null ? null : stats.mdd * 100,
+      caliber: caliberFor(instrument, lite, pe),
       strategies
     });
   }
   return {
     rows,
-    note: "\u53E3\u5F84\uFF1A\u57FA\u91D1 / ETF \u7528\u8DDF\u8E2A\u6307\u6570\u7A7F\u900F\u4F30\u503C\u5E76\u6807\u6CE8\u65E5\u671F\uFF1B\u4E3B\u52A8\u57FA\u91D1\u4E0D\u63D0\u4F9B\u5B9E\u65F6\u7A7F\u900F\uFF1B\u80A1\u7968\u4E3A PE-TTM / \u6700\u8FD1\u62AB\u9732\u8D22\u62A5\u3002\u5206\u4F4D\u4E3A\u8FD1 3 \u5E74\u5386\u53F2\u5206\u4F4D\uFF08\u6837\u672C\u4E0D\u8DB3\u663E\u793A\u300C\u6837\u672C\u4E0D\u8DB3\u300D\uFF09\u3002\u672C\u89C6\u56FE\u4E0D\u542B\u6536\u76CA\u3002"
+    scope,
+    total: scope === "all" ? everyInstrument.filter((instrument) => instrument.active).length : rows.length,
+    note: "\u53E3\u5F84\uFF1A\u57FA\u91D1 / ETF \u7528\u8DDF\u8E2A\u6307\u6570\u7A7F\u900F\u4F30\u503C\u5E76\u6807\u6CE8\u65E5\u671F\uFF1B\u4E3B\u52A8\u57FA\u91D1\u4E0D\u63D0\u4F9B\u5B9E\u65F6\u7A7F\u900F\uFF1B\u80A1\u7968\u4E3A PE-TTM / \u6700\u8FD1\u62AB\u9732\u8D22\u62A5\uFF1B\u6307\u6570\u4E3A\u6307\u6570\u4F30\u503C\u622A\u9762\u3002\u5206\u4F4D\u4E3A\u8FD1 3 \u5E74\u5386\u53F2\u5206\u4F4D\uFF08\u6837\u672C\u4E0D\u8DB3\u663E\u793A\u300C\u6837\u672C\u4E0D\u8DB3\u300D\uFF09\u3002\u672C\u89C6\u56FE\u4E0D\u542B\u6536\u76CA\uFF1B\u7F3A\u5931\u6307\u6807\u663E\u793A\u300C\u6570\u636E\u4E0D\u8DB3\u300D\uFF0C\u4E0D\u586B 0\u3002"
   };
 }
 
@@ -5187,7 +5211,7 @@ function getRebalancePlan(ctx) {
 }
 
 // plugin/server/src/api.ts
-var APP_VERSION = "0.1.1";
+var APP_VERSION = "0.1.2";
 var MASKED_KEYS = /* @__PURE__ */ new Set([
   "totalMarketValue",
   "marketValue",
@@ -5472,7 +5496,9 @@ var HANDLERS = {
     };
   },
   get_holdings_valuation: (ctx, params) => getHoldingsValuation(ctx, {
-    type: typeof params.type === "string" && params.type !== "all" ? params.type : void 0
+    type: typeof params.type === "string" && params.type !== "all" ? params.type : void 0,
+    // 估值页要「全部标的」；总览 / 持仓页保持只出持仓的原有口径。
+    scope: params.scope === "all" ? "all" : "holdings"
   }),
   analyze_holding_with_ai: async (ctx, params) => analyzeHolding(ctx, str2(params.positionId)),
   get_ai_settings: (ctx) => getAiStatus(ctx),
@@ -5927,7 +5953,7 @@ function createDefaultRegistry() {
 
 // plugin/targets/mcp/server.ts
 var SERVER_NAME = "plug-funds";
-var SERVER_VERSION = "0.1.1";
+var SERVER_VERSION = "0.1.2";
 var PROTOCOL_VERSION = "2024-11-05";
 var str3 = (description) => ({ type: "string", description });
 var num3 = (description) => ({ type: "number", description });

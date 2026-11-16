@@ -72,6 +72,10 @@ function staticChecks() {
   expect('app.js 调用 createRoot（SPA 真正挂载）', js.includes('createRoot'));
   expect('app.js 读取挂载节点', js.includes('getElementById'));
   expect('app.js 含指数页 RPC get_index_valuation', js.includes('get_index_valuation'));
+  // 估值页必须请求「全部标的」：只取持仓会让没有持仓的标的（指数 / 观察标的）整页消失。
+  expect('app.js 估值页请求全部标的（scope:"all"）', js.includes('scope:"all"'));
+  expect('app.js 含估值页类别筛选与「仅持仓」开关', js.includes('val-held-toggle') && js.includes('vchip'));
+  expect('app.js 含页面级错误边界（渲染崩溃不整站白屏）', js.includes('page-error') && js.includes('getDerivedStateFromError'));
   expect('app.js 含指数页表格 class idx-table', js.includes('idx-table'));
   expect('app.js 含二级菜单 class idx-subitem', js.includes('idx-subitem'));
   expect('app.js 含诚实边界 class idx-notice', js.includes('idx-notice'));
@@ -94,6 +98,7 @@ function staticChecks() {
   expect('app.css 含筛选工具条 idx-radios', css.includes('idx-radios'));
   expect('app.css 含组合面板样式', css.includes('pf-grid') && css.includes('pf-chip') && css.includes('corr-table'));
   expect('app.css 含响应式断点 @media', css.includes('@media'));
+  expect('app.css 含页面级错误边界样式', css.includes('page-error'));
 }
 
 // ---------------------------------------------------------------- 动态层
@@ -300,6 +305,61 @@ async function browserChecks() {
       expect('再平衡建议标签渲染', /\\u4fdd\\u6301|BUY|SELL/.test(pf.rbText) || pf.rbHold >= 1, pf.rbText);
     }
 
+    // 估值页：曾因 useCallback 依赖数组引用未定义变量（range）抛 ReferenceError →
+    // React 卸载整棵树 → 点开「估值」就是一片空白。这里守住「点开就有内容」。
+    const clickNav = async (label) => evaluate(`(() => {
+      const el = [...document.querySelectorAll('.nav-item')].find(e => e.innerText.includes(${JSON.stringify(label)}));
+      if (!el) return false; el.click(); return true;
+    })()`);
+    const pageProbe = async (selector) => {
+      let probe = null;
+      for (let i = 0; i < 30; i += 1) {
+        await sleep(300);
+        probe = await evaluate(`(() => {
+          const banner = document.querySelector('.page-error');
+          if (banner) return { error: banner.querySelector('.page-error-msg')?.innerText.trim() ?? 'unknown' };
+          if (!document.querySelector(${JSON.stringify(selector)})) return null;
+          return { mounted: true };
+        })()`);
+        if (probe) break;
+      }
+      return probe;
+    };
+
+    expect('可点击「估值」导航', await clickNav('估值') === true);
+    const valuationMounted = await pageProbe('.opp-table');
+    expect('点击「估值」后页面不空白', valuationMounted !== null && !valuationMounted.error, valuationMounted?.error ?? '');
+    const val = await evaluate(`(() => {
+      const table = document.querySelector('.opp-table');
+      if (!table) return null;
+      return {
+        title: document.querySelector('.page-head h1')?.innerText.trim() ?? '',
+        rows: table.querySelectorAll('tbody tr').length,
+        chips: [...document.querySelectorAll('.vchip')].map(e => e.innerText.replace(/\\s+/g, ' ').trim()),
+        heldToggle: !!document.querySelector('.val-held-toggle input'),
+        heldBadges: table.querySelectorAll('.badge.t-nav').length,
+        names: [...table.querySelectorAll('.inst-name')].map(e => e.innerText.trim()),
+        empty: document.querySelector('.card .empty')?.innerText.replace(/\\s+/g, ' ').slice(0, 60) ?? '',
+      };
+    })()`);
+    expect('估值页渲染表格', val !== null);
+    if (val) {
+      expect('估值页标题为「估值」', val.title === '估值', String(val.title));
+      expect('估值页有数据行（不是空表）', val.rows > 0, `rows=${val.rows}`);
+      expect('估值页类别筛选含 股票 / ETF / 指数',
+        ['股票', 'ETF', '指数'].every((label) => val.chips.some((chip) => chip.startsWith(label))), JSON.stringify(val.chips));
+      expect('估值页提供「仅持仓」开关', val.heldToggle === true);
+      // 关键回归：000300 只有标的、没有持仓，旧实现直接把它从列表里丢掉。
+      expect('估值页包含无持仓标的（沪深300）', val.names.includes('沪深300'), JSON.stringify(val.names.slice(0, 8)));
+      expect('估值页标出哪些是持仓', val.heldBadges >= 1, `badges=${val.heldBadges}`);
+    }
+
+    expect('可点击「设置」导航', await clickNav('设置') === true);
+    const settingsMounted = await pageProbe('.sub-tabs');
+    expect('点击「设置」后页面不空白', settingsMounted !== null && !settingsMounted.error, settingsMounted?.error ?? '');
+    const setTabs = await evaluate('[...document.querySelectorAll(".sub-tab")].map(e => e.innerText.trim())');
+    expect('设置页渲染 3 个分页', Array.isArray(setTabs) && setTabs.length === 3, JSON.stringify(setTabs));
+
     const clicked = await evaluate(`(() => {
       const el = [...document.querySelectorAll('.nav-item')].find(e => e.innerText.includes('\\u6307\\u6570'));
       if (!el) return false; el.click(); return true;
@@ -398,6 +458,7 @@ async function browserChecks() {
 
     expect('浏览器控制台零错误', errors.length === 0, errors.join(' | '));
     expect('无 4xx/5xx 资源请求', failedRequests.length === 0, failedRequests.join(' | '));
+    expect('全程未出现页面级渲染错误横幅', await evaluate('!document.querySelector(".page-error")') === true);
   } finally {
     try { ws?.close(); } catch { /* ignore */ }
     chrome.kill('SIGTERM');
