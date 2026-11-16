@@ -36,17 +36,33 @@ test('国证关联产品按上市属性计数，保留陈旧统计日；null、�
   assert.throws(() => parseFundReference(duplicate, 'cnindex', '399001', today), /重复/);
 });
 
-test('中证目录未给统计日时只列观察记录；分类存疑和原文错码不伪造完整数量', () => {
+test('中证目录未给统计日时只列观察记录；按上市地排除境外，未知分类不伪造完整数量', () => {
   const rows = [{ productCode: '510300', indexCode: '000300', coverage: '境内', exchange: '上海证券交易所', fundType: 'ETF' },
     { productCode: '000051', indexCode: '000300', coverage: '境内', exchange: '-', fundType: '指数基金' },
-    { productCode: '300X', indexCode: '000300', coverage: '境外', exchange: 'Tokyo', fundType: 'ETF' }];
+    { productCode: '2530 JP Equity', indexCode: '000300', coverage: '境内', exchange: '东京证券交易所', fundType: 'ETF' }];
   const result = parseFundReference({ code: '200', data: rows }, 'csindex', '000300', today);
   assert.equal(result.on, 1); assert.equal(result.off, 1); assert.equal(result.excluded, 1); assert.equal(result.sourceDate, null);
   assert.equal(result.status.state, 'SUSPECT');
   rows[1].fundType = '未知';
   assert.equal(parseFundReference({ code: '200', data: rows }, 'csindex', '000300', today).on, null);
   rows[1].productCode = '399001';
-  assert.throws(() => parseFundReference({ code: '200', data: rows }, 'csindex', '000300', today), /错码/);
+  assert.equal(parseFundReference({ code: '200', data: rows }, 'csindex', '000300', today).off, null);
+});
+
+test('基金代码可以与指数重号；国证明确境外类型与中证完整联接基金名称可核实分类', () => {
+  const result = parseFundReference({ code: 200, data: [
+    { productCode: '399001', indexCode: '000016', coverage: '境内', exchange: '-', fundType: '指数增强', fundName: '中海上证50指数增强型证券投资基金' },
+  ] }, 'csindex', '000016', today);
+  assert.equal(result.on, 0); assert.equal(result.off, 1);
+  const named = parseFundReference({ code: 200, data: [
+    { productCode: '024636', indexCode: '000300', coverage: '境内', exchange: '-', fundType: null, fundName: '招商沪深300增强策略交易型开放式指数证券投资基金发起式联接基金' },
+  ] }, 'csindex', '000300', today);
+  assert.equal(named.off, 1);
+  const cn = structuredClone(fixture.cnfunds);
+  cn.data.rows.push({ fundCode: 'CNXT', fundIndexCode: '399001.SZ', fundName: '境外基金样例', fundType: '境外基金', foundLocation: null });
+  cn.data.total++;
+  const overseas = parseFundReference(cn, 'cnindex', '399001', today);
+  assert.equal(overseas.on, 4); assert.equal(overseas.off, 1); assert.equal(overseas.excluded, 1);
 });
 
 test('中证 PDF 单张按表头解析，月度数据陈旧，零开头省略小数仍可读；错码及歧义拒绝', () => {

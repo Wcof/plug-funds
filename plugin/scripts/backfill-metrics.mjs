@@ -101,10 +101,12 @@ export async function backfillMetrics({
   fetchHistory = fetchPeTtmHistory,
   onInstrument = null,
   today = todayLocal(),
+  instrumentCodes = null,
 } = {}) {
   if (!handle?.db) throw new TypeError('backfillMetrics 需要 DbHandle');
   if (!validDate(today)) throw new TypeError('today 必须是有效的 YYYY-MM-DD 日期');
-  const instruments = listInstruments(handle, { type: 'INDEX', active: true });
+  const instruments = listInstruments(handle, { type: 'INDEX', active: true })
+    .filter((instrument) => instrumentCodes === null || instrumentCodes.includes(instrument.code));
   const report = { generatedAt: new Date().toISOString(), today, apply, instruments: [] };
   let snapshot = [];
   let snapshotError = null;
@@ -332,7 +334,8 @@ async function main() {
       handle.db.prepare('VACUUM INTO ?').run(backupPath);
       console.log(`[backfill] 写入前备份：${backupPath}`);
     }
-    const report = await backfillMetrics({ handle, apply, onInstrument: (row) => printRow(row, apply) });
+    const report = await backfillMetrics({ handle, apply, instrumentCodes: valueFor('--codes')?.split(',') ?? null,
+      onInstrument: (row) => printRow(row, apply) });
     report.stateDir = stateDir;
     report.backupPath = backupPath;
     if (jsonPath) { fs.writeFileSync(jsonPath, JSON.stringify(report, null, 2)); console.log(`[backfill] 报告已写入 ${jsonPath}`); }

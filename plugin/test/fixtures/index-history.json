@@ -1,0 +1,163 @@
+{
+  "cnindex": {
+    "code": 200,
+    "message": "",
+    "data": {
+      "indexCode": "399001",
+      "indexName": "深证成指",
+      "indexEName": "Shenzhen Index",
+      "indexSource": null,
+      "realtimemarket": null,
+      "indexType": null,
+      "showdetail": null,
+      "item": [
+        "timestamp",
+        "current",
+        "high",
+        "open",
+        "low",
+        "close",
+        "chg",
+        "percent",
+        "amount",
+        "volume",
+        "avg"
+      ],
+      "data": [
+        [
+          1767024000000,
+          13604.0673,
+          13645.556,
+          13466.3044,
+          13465.6741,
+          13604.0673,
+          66.9711,
+          0.0049472279,
+          579047001415.59,
+          21838274688,
+          null
+        ],
+        [
+          1767110400000,
+          13525.0228,
+          13642.5272,
+          13627.264,
+          13491.675,
+          13525.0228,
+          -79.0445,
+          -0.0058103579,
+          554452991002.77,
+          21903806566,
+          null
+        ],
+        [
+          1767542400000,
+          13828.6296,
+          13828.9672,
+          13633.634,
+          13633.634,
+          13828.6296,
+          303.6068,
+          0.0224477847,
+          735590603465.2,
+          28955020428,
+          null
+        ],
+        [
+          1767628800000,
+          14022.552,
+          14024.1192,
+          13830.3028,
+          13827.7928,
+          14022.552,
+          193.9224,
+          0.0140232551,
+          835491744476.13,
+          35296619474,
+          null
+        ]
+      ]
+    },
+    "total": 0,
+    "sampleDate": ""
+  },
+  "csindex": {
+    "code": "200",
+    "msg": "Success",
+    "data": [
+      {
+        "tradeDate": "20251230",
+        "indexCode": "000300",
+        "indexNameCnAll": "沪深300指数",
+        "indexNameCn": "沪深300",
+        "indexNameEnAll": "CSI 300 Index",
+        "indexNameEn": "CSI 300",
+        "open": 4617.32,
+        "high": 4664.33,
+        "low": 4616.63,
+        "close": 4651.28,
+        "change": 11.91,
+        "changePct": 0.26,
+        "tradingVol": 18037497400.0,
+        "tradingValue": 4571.85,
+        "consNumber": 300.0,
+        "peg": 14.34
+      },
+      {
+        "tradeDate": "20251231",
+        "indexCode": "000300",
+        "indexNameCnAll": "沪深300指数",
+        "indexNameCn": "沪深300",
+        "indexNameEnAll": "CSI 300 Index",
+        "indexNameEn": "CSI 300",
+        "open": 4656.48,
+        "high": 4667.05,
+        "low": 4622.1,
+        "close": 4629.94,
+        "change": -21.34,
+        "changePct": -0.46,
+        "tradingVol": 17076022400.0,
+        "tradingValue": 4444.92,
+        "consNumber": 300.0,
+        "peg": 14.31
+      },
+      {
+        "tradeDate": "20260105",
+        "indexCode": "000300",
+        "indexNameCnAll": "沪深300指数",
+        "indexNameCn": "沪深300",
+        "indexNameEnAll": "CSI 300 Index",
+        "indexNameEn": "CSI 300",
+        "open": 4661.62,
+        "high": 4721.64,
+        "low": 4661.62,
+        "close": 4717.75,
+        "change": 87.81,
+        "changePct": 1.9,
+        "tradingVol": 23414483900.0,
+        "tradingValue": 6305.77,
+        "consNumber": 300.0,
+        "peg": 14.49
+      },
+      {
+        "tradeDate": "20260106",
+        "indexCode": "000300",
+        "indexNameCnAll": "沪深300指数",
+        "indexNameCn": "沪深300",
+        "indexNameEnAll": "CSI 300 Index",
+        "indexNameEn": "CSI 300",
+        "open": 4719.21,
+        "high": 4790.69,
+        "low": 4718.01,
+        "close": 4790.69,
+        "change": 72.95,
+        "changePct": 1.55,
+        "tradingVol": 29697068600.0,
+        "tradingValue": 7254.15,
+        "consNumber": 300.0,
+        "peg": 14.69
+      }
+    ],
+    "success": true
+  }
+}

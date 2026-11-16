@@ -18,6 +18,8 @@ import { listInstruments } from '../repo/instruments.ts';
 import { archiveIndexQuotePe, latestMetricDate, metricHistory, officialIndexMetricProvider, saveMarketPoints, saveValuationMetric } from '../repo/market.ts';
 import { createCnindexProvider, type CnindexMetric } from '../market/cnindex.ts';
 import { saveCnindexMetrics } from './cnindex-valuation.ts';
+import { hasIndexYearEndBase, indexYearEndRange, saveIndexHistory } from './index-history.ts';
+import { CSINDEX_IDENTITIES } from '../market/index-identities.ts';
 import { detectConflict, type QuoteCandidate } from '../market/conflict.ts';
 import { fetchCsindexIndicator, snapshotToMetrics, type CsindexMetric } from '../market/csindex.ts';
 import {
@@ -121,7 +123,7 @@ export async function refreshMarketData(
    * 官网没有估值文件；逐个试探会白打 300+ 次接口，因此用持久化的覆盖清单判断。
    */
   const coveredCodes = getCsindexCoveredCodes(ctx.handle);
-  const hasCsindexCoverage = (code: string): boolean => code.startsWith('000') || coveredCodes.has(code);
+  const hasCsindexCoverage = (code: string): boolean => code.startsWith('000') || coveredCodes.has(code) || Boolean(CSINDEX_IDENTITIES[code]);
 
   /**
    * 收盘价只在**收盘之后**才允许写。
@@ -310,9 +312,24 @@ export async function refreshMarketData(
           const history = await provider.fetchHistory(instrument, { begin: daysAgo(400, today), end: today });
           const usable = dropUnsettledClose(history.filter((point) => point.tradingDate <= today), today, closeSettled);
           if (usable.length > 0) {
-            saveMarketPoints(ctx.handle, usable);
-            item.history = usable.length;
-            historyDone = true;
+            if (instrument.type === 'INDEX') {
+              const saved = saveIndexHistory(ctx.handle, instrument.id, usable);
+              const conflicts = saved.comparisons.filter((row) => row.conflict);
+              if (conflicts.length) notes.push(`${provider.id} 历史收盘 ${conflicts.length} 项同日多源差异超过 1%，保留双方并标记冲突`);
+            } else saveMarketPoints(ctx.handle, usable);
+            item.history += usable.length;
+            // 短历史不能阻止后续官方源补齐上年末基准；已有合格基准时不重复请求。
+            historyDone = instrument.type !== 'INDEX' || hasIndexYearEndBase(ctx.handle, instrument.id, today);
+            if (!historyDone && provider.id !== 'official-index-history') {
+              // 部分报价端长区间被条数上限截断；单独请求年末窗口，避免把“有部分历史”当成完整。
+              const baseRange = indexYearEndRange(today);
+              const base = (await provider.fetchHistory(instrument, baseRange))
+                .filter((p) => p.tradingDate >= baseRange.begin && p.tradingDate <= baseRange.end && p.priceType === 'CLOSE_PRICE');
+              const saved = saveIndexHistory(ctx.handle, instrument.id, base);
+              if (saved.comparisons.some((row) => row.conflict)) notes.push(`${provider.id} 年末收盘存在同日多源冲突，未用于 YTD`);
+              item.history += base.length;
+              historyDone = hasIndexYearEndBase(ctx.handle, instrument.id, today);
+            }
             item.provider = item.provider ?? provider.id;
           }
         } catch (error) {

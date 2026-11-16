@@ -4,7 +4,7 @@
 
 产品口径与需求见 PRD v1.4（`/Users/ldh/Downloads/investment-workstation-prd-v1.1.md`，文件名保留 v1.1）；架构决策见 `docs/design/optimization-plan.md`。
 
-数据补齐及逐项校验见 [2026-11-17 官方指数资料核验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-17-index-data-review.md) ；AI 链路的规则和验证见 [2026-11-16 数据与 AI 校验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-16-data-ai-review.md) 。
+数据补齐及逐项校验见 [2026-11-17 指数历史与身份核验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-17-index-history-review.md) ，前次资料快照见 [官方指数资料核验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-17-index-data-review.md) ；AI 链路的规则和验证见 [2026-11-16 数据与 AI 校验报告](/Users/ldh/Downloads/project/plug-funds/docs/reports/2026-11-16-data-ai-review.md) 。
 
 ## 安装（DSH ≥ 0.2.1-rc.3）
 
@@ -14,10 +14,10 @@
 # 从源码构建 + 打包
 npm install
 npm run pack:dsh
-# 产物：integrations/dsh/dist/plug-funds-dsh-investment-0.1.5.tgz
+# 产物：integrations/dsh/dist/plug-funds-dsh-investment-0.1.6.tgz
 
 # 安装到 DSH（在 DSH 的插件安装入口 / plugin_manager 中执行）
-install_bundle target=/绝对路径/integrations/dsh/dist/plug-funds-dsh-investment-0.1.5.tgz
+install_bundle target=/绝对路径/integrations/dsh/dist/plug-funds-dsh-investment-0.1.6.tgz
 ```
 
 开发迭代用目录链接（改代码后重启 DSH 窗口即生效）：
@@ -67,6 +67,7 @@ npm run verify:install  # 解包 tarball + 静态契约（含 SPA 挂载 / 指�
 npm run verify:web      # web 静态断言 + 真实 Chrome CDP 渲染与 AI 交互验证
 npm run backfill:metrics # 中证官方估值回填（默认只体检；--apply 落库，写前先备份）
 npm run backfill:cnindex # 国证完整目录滚动 PE / 静态 PE / PB / 市值（默认 dry-run）
+npm run backfill:history -- --evidence .tmp/index-history # 官方收盘历史与年末基准回填（默认 dry-run）
 npm run collect:reference -- --evidence .tmp/index-reference # 只读采集发布日期、关联目录、官方单张
 npm run backfill:reference -- --evidence .tmp/index-reference # 校验原文 SHA-256 后生成补齐计划
 npm run audit:metrics   # 估值指标多源核查（库内 / 腾讯 / 东财 / 中证官方并列对比）
@@ -79,7 +80,9 @@ node plugin/scripts/verify-web.mjs           # 只跑静态层（无需 Chrome�
 
 国证目录估值已接入常规行情刷新，每轮共享一次完整目录快照；只采纳目录确认的国证自编指数。官方主序列优先级为中证、国证、经校验的中证月度单张，PE / PB 的报价留在独立键，历史统计只使用同源数据。月度单张保留统计日与 `STALE` 标记，不当作最新日频估值；发布日期取中证 / 国证基本资料，必要时用已核验单张补充。关联基金列按官方目录产品代码计数，明确统计日或观察日；没有列表、代码存疑或分类不完整时保留空值，空数组只表示该目录列出 0 条。
 
-参考资料通过上述离线脚本更新。`backfill:reference` 的 PDF 解析需要 Python 3 与 `pypdf`，可用 `--python /绝对路径/python3` 指定解释器；运行插件不需要 Python 或额外依赖。两个回填命令均须加 `--apply` 才写库，并在写入前备份。采集原文保存在所指定的 `.tmp/` 目录中，包含 URL、采集时间与 SHA-256，重放不把旧资料标成新采集。字段缺失、来源日期和缺样本原因同步到指数页及 CSV 导出。
+参考资料通过上述离线脚本更新。`backfill:reference` 的 PDF 解析需要 Python 3 与 `pypdf`，可用 `--python /绝对路径/python3` 指定解释器；运行插件不需要 Python 或额外依赖。回填命令均须加 `--apply` 才写库，并在写入前备份。采集原文保存在所指定的 `.tmp/` 目录中，包含 URL、采集时间与 SHA-256，重放不把旧资料标成新采集。字段缺失、来源日期和缺样本原因同步到指数页及 CSV 导出。
+
+指数历史刷新会检查上年末基准：报价源长区间被截断时单独请求上年 12 月 17 日至 31 日，再尝试中证 / 国证官方日线；已有合格基准时不重复补取。官方日线校验代码、日期、收盘价及 OHLC，新增来源与已有同日收盘对照，差异超过 1% 保留双方并标冲突。`backfill:history` 支持 `--codes`、`--begin`、`--end` 和 `--offline`，离线模式核对已采集原文的 URL 与 SHA-256；连续 403 后停止对应来源，失败不解释为没有历史。
 
 错误码：用户输入 / 外部数据校验失败为 `422 validation-error`，资源不存在为 `404 not-found`，账本冲突为 `422`，schema 冲突为 `409`；程序内部故障仍为 `500 internal-error`。
 

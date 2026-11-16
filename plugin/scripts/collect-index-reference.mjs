@@ -8,12 +8,14 @@ import { todayLocal } from '../server/src/ids.ts';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
+import { csindexOfficialCode } from '../server/src/market/index-identities.ts';
 const args=process.argv.slice(2);
 const arg=(name,fallback)=>args.includes(name)?args[args.indexOf(name)+1]:fallback;
 const dir=path.resolve(arg('--evidence', `.tmp/index-reference-${Date.now()}`)); fs.mkdirSync(dir,{recursive:true});
 const handle=openBackfillState(path.resolve(arg('--state',path.join(os.homedir(),'.plug-funds'))));
 const db=handle.db;
-const targets = db.prepare("SELECT code,name,market,founded_date FROM instruments WHERE active=1 AND type='INDEX' ORDER BY code").all();db.close();
+const codes = arg('--codes')?.split(',');
+const targets = db.prepare("SELECT code,name,market,founded_date FROM instruments WHERE active=1 AND type='INDEX' ORDER BY code").all().filter((row) => !codes || codes.includes(row.code));db.close();
 const cn = new Set();
 const manifestFile=path.join(dir,'manifest.json');
 const manifest=fs.existsSync(manifestFile)?JSON.parse(fs.readFileSync(manifestFile)):{};
@@ -21,8 +23,16 @@ const save=()=>{fs.writeFileSync(manifestFile+'.pending',JSON.stringify(manifest
 const blocked=new Map();
 const exec=promisify(execFile);
 async function get(code,kind,url,binary=false){
- const key=`${code}-${kind}`;const file=path.join(dir,key+(binary?'.pdf':'.json'));
- if(manifest[key]?.status==='OK'&&fs.existsSync(file))return binary?file:JSON.parse(fs.readFileSync(file));
+ const key=`${code}-${kind}`;const file=path.join(dir,key+'-'+createHash('sha256').update(url).digest('hex').slice(0,8)+(binary?'.pdf':'.json'));
+ const cached=manifest[key];
+ if(cached?.status==='OK'&&cached.url===url&&path.basename(cached.file)===cached.file){
+  const oldFile=path.join(dir,cached.file);
+  if(fs.existsSync(oldFile)){
+   const bytes=fs.readFileSync(oldFile);
+   if(createHash('sha256').update(bytes).digest('hex')!==cached.sha256)throw new Error('已保存资料 SHA256 不匹配');
+   return binary?oldFile:JSON.parse(bytes);
+  }
+ }
  const host=new URL(url).hostname;
  const endpoint=host+new URL(url).pathname.replace(/[0-9]{6}/g,':code');
  if((blocked.get(endpoint)||0)>=3){manifest[key]={code,kind,url,status:'HOST_BLOCKED',reason:'同一端点连续三次403，中止该端点后续请求'};return null;}
@@ -48,11 +58,11 @@ async function worker(){
   const funds=await get(c,'cnfunds',`https://www.cnindex.com.cn/info/fund?indexCode=${c}&pageNum=1&rows=2000`);
   if(Array.isArray(funds?.data?.rows)&&funds.data.total>funds.data.rows.length)manifest[`${c}-cnfunds`].incomplete=true;
  }else{
-  await get(c,'csinfo',`https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/${c}`);
-  await get(c,'csfunds',`https://www.csindex.com.cn/csindex-home/index-list/queryByIndexCode/${c}?indexCode=${c}`);
-  const details=await get(c,'csdetails',`https://www.csindex.com.cn/csindex-home/indexInfo/index-details-data?fileLang=2&indexCode=${c}`);
-  const exact=details?.data?.['指数单张']?.find(r=>r.fileName===`${c}factsheet.pdf`);
-  if(exact){const u=new URL(exact.filePath);if(u.protocol==='https:'&&u.hostname==='oss-ch.csindex.com.cn')await get(c,'factsheet',u.href,true);}
+  const official=csindexOfficialCode(c);
+  await get(c,'csinfo',`https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/${official}`);
+  await get(c,'csfunds',`https://www.csindex.com.cn/csindex-home/index-list/queryByIndexCode/${official}?indexCode=${official}`);
+  await get(c,'csdetails',`https://www.csindex.com.cn/csindex-home/indexInfo/index-details-data?fileLang=2&indexCode=${official}`);
+  await get(c,'factsheet',`https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/${official}factsheet.pdf`,true);
  }
  done++;save();if(done%20===0)console.log(JSON.stringify({done,total:targets.length,ok:Object.values(manifest).filter(r=>r.status==='OK').length,failed:Object.values(manifest).filter(r=>r.status!=='OK').length}));
  }

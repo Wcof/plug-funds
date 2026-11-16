@@ -14,15 +14,16 @@ import { getIndexReference, saveIndexReference } from '../server/src/repo/index-
 import { todayLocal } from '../server/src/ids.ts';
 import { shanghaiParts } from '../core/src/calendar.ts';
 import { parseCnindexSnapshot, CNINDEX_BASE } from '../server/src/market/cnindex.ts';
+import { csindexOfficialCode, CSINDEX_IDENTITIES } from '../server/src/market/index-identities.ts';
 
 const sha = (v) => createHash('sha256').update(v).digest('hex');
 const rootUrl = (kind, code) => ({
   cnintro: `https://www.cnindex.com.cn/index-intro?indexcode=${code}`,
   cnfunds: `https://www.cnindex.com.cn/info/fund?indexCode=${code}&pageNum=1&rows=2000`,
-  csinfo: `https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/${code}`,
-  csfunds: `https://www.csindex.com.cn/csindex-home/index-list/queryByIndexCode/${code}?indexCode=${code}`,
-  csdetails: `https://www.csindex.com.cn/csindex-home/indexInfo/index-details-data?fileLang=2&indexCode=${code}`,
-  factsheet: `https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/${code}factsheet.pdf`,
+  csinfo: `https://www.csindex.com.cn/csindex-home/indexInfo/index-basic-info/${csindexOfficialCode(code)}`,
+  csfunds: `https://www.csindex.com.cn/csindex-home/index-list/queryByIndexCode/${csindexOfficialCode(code)}?indexCode=${csindexOfficialCode(code)}`,
+  csdetails: `https://www.csindex.com.cn/csindex-home/indexInfo/index-details-data?fileLang=2&indexCode=${csindexOfficialCode(code)}`,
+  factsheet: `https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/${csindexOfficialCode(code)}factsheet.pdf`,
 })[kind];
 
 export async function planIndexReference({ handle, evidenceDir, today = todayLocal(), extractPdf = async () => { throw new Error('未配置 PDF 提取器'); } }) {
@@ -68,8 +69,10 @@ export async function planIndexReference({ handle, evidenceDir, today = todayLoc
     if (!isCn) {
       try {
         const details = read('csdetails');
-        const selected = details?.data?.['指数单张']?.find((row) => row.fileName === `${ins.code}factsheet.pdf`);
-        if (!selected || selected.filePath !== rootUrl('factsheet', ins.code)) throw new Error('官方资料列表没有该指数的人民币价格指数单张');
+        const selected = details?.data?.['指数单张']?.find((row) => row.fileName === `${csindexOfficialCode(ins.code)}factsheet.pdf`);
+        if (!selected || selected.filePath !== rootUrl('factsheet', ins.code)) throw new Error('资料目录未提供预期单张链接，独立核验官网固定路径文件');
+      } catch (error) { errors.push({ field: 'factsheetCatalog', reason: error.message }); }
+      try {
         const document = read('factsheet');
         const text = await extractPdf(document.file);
         factsheet = parseCsindexFactsheet(text, ins.code, today);
@@ -85,6 +88,7 @@ export async function planIndexReference({ handle, evidenceDir, today = todayLoc
       .filter((v) => typeof v === 'string').sort();
     const observedDate = recordedDates.length ? shanghaiParts(new Date(recordedDates.at(-1))).date : today;
     const reference = { code: ins.code, provider, observedDate, publishDate,
+      ...(CSINDEX_IDENTITIES[ins.code] ? { identity: CSINDEX_IDENTITIES[ins.code] } : {}),
       publishStatus: publishDate ? { state: 'VALID', reason: null } : { state: 'MISSING', reason: errors.find((e) => e.field === 'publishDate')?.reason ?? '官方基本资料未列出发布日期' },
       funds: funds ?? oldReference?.funds ?? null,
       unavailable: {
@@ -114,6 +118,8 @@ export async function planIndexReference({ handle, evidenceDir, today = todayLoc
       return !old || old.value !== metric.value || old.provider !== metric.provider || old.quality !== metric.quality ? [{ before: old, after: metric }] : [];
     });
     report.rows.push({ instrumentId: ins.id, code: ins.code, name: ins.name, previousPublishDate: ins.foundedDate,
+      nameChanged: Boolean(CSINDEX_IDENTITIES[ins.code] && CSINDEX_IDENTITIES[ins.code].name !== ins.name),
+      canonicalName: CSINDEX_IDENTITIES[ins.code]?.name ?? ins.name,
       publishChanged: publishDate !== null && publishDate !== ins.foundedDate,
       referenceChanged: JSON.stringify(oldReference) !== JSON.stringify(reference), reference, desired, changes, errors, factsheet });
   }
@@ -124,14 +130,17 @@ export function applyIndexReference(handle, report) {
   handle.db.exec('BEGIN IMMEDIATE;');
   try {
     for (const row of report.rows) {
+      if (row.nameChanged) handle.db.prepare('UPDATE instruments SET name=?, updated_at=? WHERE id=?')
+        .run(row.canonicalName, new Date().toISOString(), row.instrumentId);
       if (row.publishChanged) handle.db.prepare('UPDATE instruments SET founded_date=?, updated_at=? WHERE id=?')
         .run(row.reference.publishDate, new Date().toISOString(), row.instrumentId);
       if (row.referenceChanged) saveIndexReference(handle, row.instrumentId, row.reference);
       if (row.desired.some((m) => m.metricKey === 'pb')) archiveIndexQuoteMetric(handle, row.instrumentId, 'pb');
       for (const metric of row.desired) saveValuationMetric(handle, { instrumentId: row.instrumentId, ...metric });
-      if (row.publishChanged || row.changes.some((c) => c.before)) {
+      if (row.nameChanged || row.publishChanged || row.changes.some((c) => c.before)) {
         const note = JSON.stringify({ kind: 'index-reference-update', code: row.code, instrumentId: row.instrumentId,
           previousPublishDate: row.previousPublishDate, publishDate: row.reference.publishDate, changes: row.changes,
+          previousName: row.name, name: row.canonicalName ?? row.name, identity: row.reference.identity ?? null,
           evidence: row.reference.evidence });
         const now = new Date().toISOString();
         handle.db.prepare('INSERT OR IGNORE INTO data_source_runs (id,started_at,finished_at,instruments,ok,failed,note) VALUES (?,?,?,?,?,?,?)')

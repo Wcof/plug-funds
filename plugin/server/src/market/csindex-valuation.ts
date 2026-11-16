@@ -22,6 +22,7 @@
  *   属数据源未覆盖，不是抓取失败。
  */
 import type { DataQuality } from '../../../core/src/types.ts';
+import { csindexOfficialCode } from './index-identities.ts';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36';
 const TIMEOUT_MS = 15_000;
@@ -198,5 +199,5 @@ export async function fetchValuationSnapshot(): Promise<CsindexValuationSnapshot
 
 /** 逐日滚动 PE 全量历史；国证系列返回空数组（数据源未覆盖，不抛错）。 */
 export async function fetchPeTtmHistory(indexCode: string): Promise<CsindexPePoint[]> {
-  return parsePeTtmHistory(await fetchJson(`${BASE}/perf/indexCsiDsPe?indexCode=${encodeURIComponent(indexCode)}`));
+  return parsePeTtmHistory(await fetchJson(`${BASE}/perf/indexCsiDsPe?indexCode=${encodeURIComponent(csindexOfficialCode(indexCode))}`));
 }

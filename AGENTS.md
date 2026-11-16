@@ -55,7 +55,8 @@ plugin/
 - **决策就绪度口径**：9 维度（持仓与成本 14 / 价格与市值 18 / 组合估值 11 / 外部资金流 9 / 收益与风险 13 / 投资目标 7 / 集中度 10 / 市场估值坐标 7 / 现金与流动性 11）。缺数据必须记 `MISSING` / `PARTIAL`，绝不用 0 或估算值凑数；分数只描述「信息完备度」，不得表述成收益预期或投资建议。集中度缺价持仓不进入占比分母，单独计入 `missingCount`。
 - **再平衡语义**：只有设置了目标权重才产生 `BUY` / `SELL`；未设目标一律 `HOLD`（把「没填」当「目标为 0」会给出全仓卖出的假建议）。建议只是提示，不下单。
 - **交易日历**：一律走 `services/calendar.ts`（指数日线反推，`000300` 优先）与 `core/src/calendar.ts`（纯函数）。时间按 UTC+8 计算，禁止用 `new Date().toISOString().slice(0,10)` 当「今天」——那会在北京时间 00:00–08:00 差一天。样本 <20 天退回工作日并标 `assumed`，不得声称已含节假日。
-- **行情多源**：`createDefaultRegistry()` = 腾讯主源 + 东财兜底，业务层只用 `resolveAll()` 逐个尝试；同一标的同日同类型相对差 >1% 标 `CONFLICT` 并保留双方记录。新增 Provider 必须实现 `MarketProvider` 且解析函数为纯函数、由 fixture 锁定。
+- **行情多源**：`createDefaultRegistry()` = 腾讯主源 + 东财兜底 + 官方指数日线兜底，业务层只用 `resolveAll()` 逐个尝试；同一标的同日同类型相对差 >1% 标 `CONFLICT` 并保留双方记录。新增 Provider 必须实现 `MarketProvider` 且解析函数为纯函数、由 fixture 锁定。
+- **指数年末基准和历史核对**：报价端宽区间可能被条数上限截断；缺基准时独立请求上年 12 月 17 日至 31 日，再尝试官方日线，已有合格基准不重复请求。INDEX 历史统一经 `services/index-history.ts` 对照同日收盘并保留冲突与原值证据；预览与落库必须一致，新增冲突可使已有基准失效。中证 / 国证日线分别核验响应身份、日期区间和 OHLC，403 为请求失败，运行时退避 15 分钟、离线采集连续三次 403 后停止该源。
 - **公开接口易变**：东财场外基金净值端点是 `/f10/lsjz`（不是 `lsjnz`），且服务端硬性每页 20 条（传 400 直接 0 行）；全量历史走 `fund.eastmoney.com/pingzhongdata/<code>.js`。改动适配器时先跑真实抽验，不要把接口缺陷记成「网络不可达」。
 - **估算净值**：`fundgz` 端点已下线（恒返回 404 HTML），`parseFundGz` 解析失败返回 `null`，不得回填任何猜测值。
 - **「指数」页边界**：只复刻 `touzid.com/indice/#/6` 的结构 / 样式 / 交互；数值只取本机 `type=INDEX` 标的的 `valuation_metrics` / `market_points`，绝不复制第三方真实行情；无数据时必须用「结构预览」显式标注且数值列恒为「—」；参考页成分股聚合口径仅作标注，不声称等价实现；数据源未覆盖的视图（互联互通 / 两融）必须写明「需要什么数据」，不得填 0。
@@ -65,8 +66,9 @@ plugin/
 - **估值指标口径不许混用**：报价端 PE、中证滚动 PE、静态 PE、PE2 计算用股本和 PE1 总股本分别保留来源与日期。不同日期或未证明同一口径的值标 `NOT_COMPARABLE`，不得按百分差直接宣布错误或冲突。只有同日、同口径才能做数值校验；覆盖原值、迁移报价和清理派生值须保留审计证据。核查入口为 `audit:metrics` 与 `audit:indices`。
 - **指数 PE 主序列**：有中证官方滚动 PE 历史时，`pe` 采用 `indexCsiDsPe`，报价端值独立保存在 `pe_quote`，不得混入官方历史。尚未取得官方主值时可保留报价端 `pe`，明确标注口径待核实。跨口径或跨日期差异不能证明报价数值错误。静态 PE 落 `pe_official_static`；其他股本口径各用独立键。新增估值来源时先核对定义、日期和覆盖范围。
 - **国证官方与主序列选择**：`cnindex.ts` 校验完整目录总数、重复代码及抓取前后 `queryDay` 一致，只采纳 `399` 六位代码且 `indexsource=1` 的自编指数；`peDynamic` 为官网滚动 PE，`peStatic` 为静态 PE，市值原始单位为元。一轮刷新共享一次快照或失败，不逐标的重复请求。PE / PB 官方优先级为 `csindex > cnindex > csindex-factsheet`；报价隔离在 `pe_quote` / `pb_quote`，分位历史只取所选同源序列，不跨源拼接。
-- **官方月度单张**：离线脚本只接受资料目录指向的同码人民币价格指数 `factsheet.pdf`，校验统计日、计算用股本说明及原文 SHA-256。月度来源为 `csindex-factsheet`，保留实际日期与陈旧状态，不替代更高优先级主值；PE 和股息率单张对照值使用独立键。Python / pypdf 仅用于离线采集重放，不加入插件运行依赖。
-- **指数参考资料**：`app_settings` 的 `index_reference:<instrumentId>` 保存发布日期、官方关联目录统计、观察日、缺失依据及 URL / SHA-256。发布日期不能用基日替代；基金数按官方境内产品代码计，有明确上市交易所为场内，未上市的指数/联接/指数增强类型为场外，不推断合并份额。空数组只表示该目录为 0；`data:null`、疑似错码或分类不完整保留 null，历史统计或无统计日须明确标注。PS、财年 ROE 不由 PE / PB 比值推算。
+- **官方月度单张**：离线脚本接受资料目录指向，或官网固定资料目录中可验证身份的人民币价格指数 `factsheet.pdf`；核对实际指数代码、统计日、计算用股本说明及原文 SHA-256，目录请求失败必须另留原因。月度来源为 `csindex-factsheet`，保留实际日期与陈旧状态，不替代更高优先级主值；PE 和股息率单张对照值使用独立键。Python / pypdf 仅用于离线采集重放，不加入插件运行依赖。
+- **指数代码对应关系须有官方证据**：`index-identities.ts` 只记录已证实的同一指数代码映射，不能借用其他指数。`000974 → H30086` 由官方单张中的指数码及彭博代码 SH000974 证明；`399903 → 000903` 由中证 A100 编制方案并列代码证明。存储与报价保留原交易所代码，官方请求和响应身份按映射校验；名称纠正与映射依据留档。
+- **指数参考资料**：`app_settings` 的 `index_reference:<instrumentId>` 保存发布日期、官方关联目录统计、观察日、缺失依据及 URL / SHA-256。发布日期不能用基日替代；基金数按官方境内产品代码计，有明确上市交易所为场内，未上市的指数/联接/指数增强类型为场外，不推断合并份额。产品地域按上市交易所或明确境外基金类型判断，`coverage` 是跟踪指数地域，不能用于排除境外产品。`399001` 也可为合法基金代码，不得按指数代码前缀拒绝基金；类型缺失仅在完整产品名明确为联接基金时分类，其他未知类型保留存疑。空数组只表示该目录为 0；`data:null`、身份无法确认或分类不完整保留 null，历史统计或无统计日须明确标注。PS、财年 ROE 不由 PE / PB 比值推算。
 - **股息率口径分开**：XLS 股息率2写 `dividend_yield_calc_share`，股息率1写 `dividend_yield_total_share`；JSON 主值写 `dividend_yield`。非 JSON 覆盖时 XLS 可兜底主值，但 provider 必须为 `csindex-xls-calc-share`；已知或已有 JSON 覆盖时，失败/缺行不能以 XLS 覆盖主值。当前少量样本相等不能证明两个接口始终同口径。
 - **中证官方估值优先 JSON**：`market/csindex-valuation.ts` 使用 `https://www.csindex.com.cn/csindex-home/data-service/indexValuation`（快照：静态 PE / 滚动 PE / PB / 股息率）与 `/perf/indexCsiDsPe?indexCode=`（逐日滚动 PE 历史）。快照当前返回 8 只仪表盘指数，其他指数的 PB 在该接口中缺失，不代表所有公开来源均无数据。OSS `indicator/<code>indicator.xls` 作为补充来源，可能被 WAF 拦截；403 必须记录为请求失败，不能当成接口下线或指数没有数据。空数组、网络失败和解析失败分别记录，不推算或借用其他指数补空。
 - **收盘价只在收盘后写**：K 线接口盘中会返回「当日未完成 bar」，把它当 `CLOSE_PRICE` 入库等于用盘中价冒充收盘价（同一天还有一条真的 `REALTIME_PRICE`）。`refresh.ts` 的 `dropUnsettledClose()` 按会话阶段判断：只有 `after`（≥15:00）或 `closed-day` 才写当日收盘价，**午休（`lunch`）也不算收盘**——`session.open === false` 不等于收盘。回填历史时若发现当日 CLOSE 与 REALTIME 同时存在，先判断写入时刻再决定删哪条。
@@ -97,6 +99,7 @@ npm run verify:web            # web 静态断言 + 真实 Chrome CDP 渲染与 A
 node plugin/scripts/audit-metrics.mjs  # 估值指标多源核查（腾讯 / 东财 / 中证官方，只读副本）
 npm run backfill:metrics      # 官方估值回填（默认 dry-run；--apply 落库，写前先备份 ~/.plug-funds/data）
 npm run backfill:cnindex      # 国证目录估值回填（默认 dry-run；--apply 写前备份）
+npm run backfill:history      # 官方指数收盘对照及回填（默认 dry-run；--offline 重放原文，--apply 写前备份）
 npm run collect:reference -- --evidence .tmp/index-reference # 官方参考资料只读采集、断点续采
 npm run backfill:reference -- --evidence .tmp/index-reference # 校验原文并生成计划，--apply 写前备份
 npm run import:indices        # 导入沪深指数目录（000/399，默认 dry-run；--apply 只建标的、不写数值）

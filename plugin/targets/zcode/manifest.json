@@ -1,7 +1,7 @@
 {
   "id": "plug-funds",
   "name": "个人投资工作站",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "本机投资账本与决策支持：持仓 / 现金 / 指数估值 / 风险画像 / 再平衡建议 / 决策就绪度。本地优先，AI 分析需手动触发并确认外发范围。",
   "vendor": "local",
   "homepage": "https://github.com/Wcof/plug-funds",
@@ -43,7 +43,7 @@
   ],
   "permissions": {
     "filesystem": ["${stateDir}"],
-    "network": ["qt.gtimg.cn", "web.ifzq.gtimg.cn", "push2.eastmoney.com", "api.fund.eastmoney.com"],
+    "network": ["qt.gtimg.cn", "web.ifzq.gtimg.cn", "push2.eastmoney.com", "api.fund.eastmoney.com", "www.csindex.com.cn", "www.cnindex.com.cn", "hq.cnindex.com.cn", "oss-ch.csindex.com.cn"],
     "notes": "行情为显式拉取（手动刷新或交易时段定时刷新），不做后台常驻轮询。"
   },
   "host": {

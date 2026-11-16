@@ -7,6 +7,7 @@
 import type { Instrument, MarketPoint } from '../../../core/src/types.ts';
 import { createEastmoneyProvider } from './eastmoney.ts';
 import { createTencentProvider } from './tencent.ts';
+import { createOfficialIndexHistoryProvider } from './index-history.ts';
 
 export interface HistoryRequest {
   begin: string;
@@ -52,5 +53,5 @@ export function createRegistry(providers: MarketProvider[]): ProviderRegistry {
  * 东财补历史净值与估值明细。任一源不可达时由另一源兜底，不产生伪造数据。
  */
 export function createDefaultRegistry(): ProviderRegistry {
-  return createRegistry([createTencentProvider(), createEastmoneyProvider()]);
+  return createRegistry([createTencentProvider(), createEastmoneyProvider(), createOfficialIndexHistoryProvider()]);
 }

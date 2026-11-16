@@ -4675,14 +4675,14 @@ async function fetchJson2(url) {
     reader2.releaseLock();
   }
 }
-async function fetchCnindexSnapshot(today = todayLocal(), loadJson = fetchJson2) {
-  const before = await loadJson(`${CNINDEX_BASE}/index/queryDay`);
+async function fetchCnindexSnapshot(today = todayLocal(), loadJson2 = fetchJson2) {
+  const before = await loadJson2(`${CNINDEX_BASE}/index/queryDay`);
   parseCnindexDate(before, today);
   const pages = [];
   let total = 0;
   let count = 0;
   for (let page = 1; page <= 10; page++) {
-    const payload = await loadJson(`${CNINDEX_BASE}/index/indexList?channelCode=-1&rows=2000&pageNum=${page}`);
+    const payload = await loadJson2(`${CNINDEX_BASE}/index/indexList?channelCode=-1&rows=2000&pageNum=${page}`);
     const parsed = parseCnindexPage(payload);
     if (page > 1 && parsed.total !== total) throw new Error("\u56FD\u8BC1\u76EE\u5F55\u603B\u6570\u5728\u5206\u9875\u65F6\u53D8\u5316");
     total = parsed.total;
@@ -4691,7 +4691,7 @@ async function fetchCnindexSnapshot(today = todayLocal(), loadJson = fetchJson2)
     if (count >= total) break;
     if (parsed.rows.length === 0) throw new Error("\u56FD\u8BC1\u76EE\u5F55\u5206\u9875\u63D0\u524D\u7ED3\u675F");
   }
-  const after = await loadJson(`${CNINDEX_BASE}/index/queryDay`);
+  const after = await loadJson2(`${CNINDEX_BASE}/index/queryDay`);
   return parseCnindexSnapshot(pages, before, after, today);
 }
 function createCnindexProvider(today = todayLocal(), load = () => fetchCnindexSnapshot(today)) {
@@ -4746,6 +4746,9 @@ function saveCnindexMetrics(handle2, instrumentId, metrics) {
   }
 }
 
+// plugin/server/src/services/index-history.ts
+import { createHash as createHash4 } from "node:crypto";
+
 // plugin/server/src/market/conflict.ts
 var DEFAULT_CONFLICT_THRESHOLD = 0.01;
 function relativeDiff(a, b) {
@@ -4769,6 +4772,88 @@ function detectConflict(candidates, threshold = DEFAULT_CONFLICT_THRESHOLD) {
     }
   }
   return worst;
+}
+
+// plugin/server/src/services/index-history.ts
+function indexYearEndRange(today) {
+  const year = Number(today.slice(0, 4)) - 1;
+  return { begin: `${year}-12-17`, end: `${year}-12-31` };
+}
+function hasIndexYearEndBase(handle2, instrumentId, today) {
+  const range = indexYearEndRange(today);
+  return effectiveHistoryPoints(handle2, instrumentId, "INDEX", range.begin, range.end, today).some((point2) => point2.priceType !== "REALTIME_PRICE" && !["CONFLICT", "MISSING"].includes(point2.quality) && Number.isFinite(Number(point2.value)) && Number(point2.value) > 0);
+}
+function planIndexHistory(handle2, instrumentId, incoming) {
+  const writes = [];
+  const comparisons = [];
+  const changes = [];
+  const stored = historyPoints(handle2, instrumentId, ["CLOSE_PRICE"]);
+  const byDate = /* @__PURE__ */ new Map();
+  for (const point2 of stored) {
+    const list = byDate.get(point2.tradingDate) ?? [];
+    list.push(point2);
+    byDate.set(point2.tradingDate, list);
+  }
+  for (const point2 of incoming) {
+    if (point2.instrumentId !== instrumentId || point2.priceType !== "CLOSE_PRICE") throw new Error("\u6307\u6570\u5386\u53F2\u5199\u5165\u8EAB\u4EFD\u6216\u4EF7\u683C\u7C7B\u578B\u4E0D\u7B26");
+    const existing = byDate.get(point2.tradingDate) ?? [];
+    const same = existing.find((p) => p.provider === point2.provider);
+    const others = existing.filter((p) => p.provider !== point2.provider);
+    for (const other of others) {
+      const difference = Math.abs(Number(other.value) - Number(point2.value)) / Math.max(Number(other.value), Number(point2.value));
+      comparisons.push({ date: point2.tradingDate, provider: other.provider, value: other.value, official: point2.value, relativeDifference: difference, conflict: difference > 0.01 });
+    }
+    const conflict = detectConflict([point2, ...others]) !== null || existing.some((p) => p.quality === "CONFLICT");
+    const after = { ...point2, quality: conflict ? "CONFLICT" : point2.quality };
+    if (!same || same.value !== after.value || same.quality !== after.quality) {
+      writes.push(after);
+      changes.push({ before: same ?? null, after, reason: same ? "\u540C\u6E90\u6536\u76D8\u66F4\u65B0\u6216\u591A\u6E90\u51B2\u7A81\u6807\u8BB0" : "\u65B0\u589E\u6765\u6E90\u6536\u76D8\u8BB0\u5F55" });
+    }
+    if (conflict) for (const other of others.filter((p) => p.quality !== "CONFLICT")) {
+      const marked = { ...other, quality: "CONFLICT" };
+      writes.push(marked);
+      changes.push({ before: other, after: marked, reason: "\u540C\u65E5\u540C\u7C7B\u578B\u6536\u76D8\u5DEE\u5F02\u8D85\u8FC7 1%\uFF0C\u4FDD\u7559\u53CC\u65B9" });
+    }
+  }
+  return { writes, changes, comparisons };
+}
+function saveIndexHistory(handle2, instrumentId, points) {
+  const plan = planIndexHistory(handle2, instrumentId, points);
+  handle2.db.exec("SAVEPOINT index_history;");
+  try {
+    saveMarketPoints(handle2, plan.writes);
+    const revised = plan.changes.filter((change) => change.before !== null);
+    if (revised.length) {
+      const note = JSON.stringify({ kind: "index-history-reconciliation", instrumentId, changes: revised });
+      const id = `index-history-${createHash4("sha256").update(note).digest("hex")}`;
+      const now = (/* @__PURE__ */ new Date()).toISOString();
+      handle2.db.prepare("INSERT OR IGNORE INTO data_source_runs (id,started_at,finished_at,instruments,ok,failed,note) VALUES (?,?,?,?,?,?,?)").run(id, now, now, 1, 1, 0, note);
+    }
+    handle2.db.exec("RELEASE index_history;");
+    return plan;
+  } catch (error) {
+    handle2.db.exec("ROLLBACK TO index_history; RELEASE index_history;");
+    throw error;
+  }
+}
+
+// plugin/server/src/market/index-identities.ts
+var CSINDEX_IDENTITIES = {
+  "000974": {
+    officialCode: "H30086",
+    name: "800\u91D1\u878D",
+    evidence: "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/H30086factsheet.pdf",
+    reason: "\u5B98\u65B9\u5355\u5F20\u6307\u6570\u4EE3\u7801 H30086\uFF0C\u5F6D\u535A\u4EE3\u7801 SH000974\uFF0C\u540D\u79F0\u4E3A\u4E2D\u8BC1800\u91D1\u878D\u6307\u6570"
+  },
+  "399903": {
+    officialCode: "000903",
+    name: "\u4E2D\u8BC1A100",
+    evidence: "https://oss-ch.csindex.com.cn/static/html/csindex/public/uploads/indices/detail/files/zh_CN/000903_Index_Methodology_cn.pdf",
+    reason: "\u4E2D\u8BC1 A100 \u7F16\u5236\u65B9\u6848\u660E\u786E\u6307\u6570\u4EE3\u7801 000903/399903\uFF0C\u4E24\u8005\u4E3A\u540C\u4E00\u6307\u6570"
+  }
+};
+function csindexOfficialCode(code) {
+  return CSINDEX_IDENTITIES[code]?.officialCode ?? code;
 }
 
 // plugin/server/src/market/csindex.ts
@@ -5141,7 +5226,7 @@ async function fetchValuationSnapshot() {
   return parseValuationSnapshot(await fetchJson3(`${BASE}/data-service/indexValuation`));
 }
 async function fetchPeTtmHistory(indexCode) {
-  return parsePeTtmHistory(await fetchJson3(`${BASE}/perf/indexCsiDsPe?indexCode=${encodeURIComponent(indexCode)}`));
+  return parsePeTtmHistory(await fetchJson3(`${BASE}/perf/indexCsiDsPe?indexCode=${encodeURIComponent(csindexOfficialCode(indexCode))}`));
 }
 
 // plugin/server/src/market/csindex-coverage.ts
@@ -5195,7 +5280,7 @@ async function refreshMarketData(ctx, filter = {}) {
     return officialSnapshot;
   };
   const coveredCodes = getCsindexCoveredCodes(ctx.handle);
-  const hasCsindexCoverage = (code) => code.startsWith("000") || coveredCodes.has(code);
+  const hasCsindexCoverage = (code) => code.startsWith("000") || coveredCodes.has(code) || Boolean(CSINDEX_IDENTITIES[code]);
   let closeSettled = false;
   try {
     const phase = getTradingCalendarInfo(ctx).session.phase;
@@ -5379,9 +5464,21 @@ async function refreshMarketData(ctx, filter = {}) {
           const history = await provider.fetchHistory(instrument, { begin: daysAgo(400, today), end: today });
           const usable = dropUnsettledClose(history.filter((point2) => point2.tradingDate <= today), today, closeSettled);
           if (usable.length > 0) {
-            saveMarketPoints(ctx.handle, usable);
-            item.history = usable.length;
-            historyDone = true;
+            if (instrument.type === "INDEX") {
+              const saved = saveIndexHistory(ctx.handle, instrument.id, usable);
+              const conflicts = saved.comparisons.filter((row) => row.conflict);
+              if (conflicts.length) notes.push(`${provider.id} \u5386\u53F2\u6536\u76D8 ${conflicts.length} \u9879\u540C\u65E5\u591A\u6E90\u5DEE\u5F02\u8D85\u8FC7 1%\uFF0C\u4FDD\u7559\u53CC\u65B9\u5E76\u6807\u8BB0\u51B2\u7A81`);
+            } else saveMarketPoints(ctx.handle, usable);
+            item.history += usable.length;
+            historyDone = instrument.type !== "INDEX" || hasIndexYearEndBase(ctx.handle, instrument.id, today);
+            if (!historyDone && provider.id !== "official-index-history") {
+              const baseRange = indexYearEndRange(today);
+              const base = (await provider.fetchHistory(instrument, baseRange)).filter((p) => p.tradingDate >= baseRange.begin && p.tradingDate <= baseRange.end && p.priceType === "CLOSE_PRICE");
+              const saved = saveIndexHistory(ctx.handle, instrument.id, base);
+              if (saved.comparisons.some((row) => row.conflict)) notes.push(`${provider.id} \u5E74\u672B\u6536\u76D8\u5B58\u5728\u540C\u65E5\u591A\u6E90\u51B2\u7A81\uFF0C\u672A\u7528\u4E8E YTD`);
+              item.history += base.length;
+              historyDone = hasIndexYearEndBase(ctx.handle, instrument.id, today);
+            }
             item.provider = item.provider ?? provider.id;
           }
         } catch (error) {
@@ -7064,6 +7161,133 @@ function createTencentProvider() {
   };
 }
 
+// plugin/server/src/market/index-reference.ts
+function validReferenceDate(value, today) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) && value <= today && Number.isFinite(Date.parse(`${value}T00:00:00Z`)) && (/* @__PURE__ */ new Date(`${value}T00:00:00Z`)).toISOString().slice(0, 10) === value;
+}
+
+// plugin/server/src/market/index-history.ts
+function indexHistoryUrl(source, code, range) {
+  if (!/^(000|399)\d{3}$/.test(code)) throw new Error("\u5B98\u65B9\u65E5\u7EBF\u6307\u6570\u4EE3\u7801\u65E0\u6548");
+  if (!validReferenceDate(range.begin, range.end) || !validReferenceDate(range.end, range.end)) throw new Error("\u5B98\u65B9\u65E5\u7EBF\u8BF7\u6C42\u65E5\u671F\u65E0\u6548");
+  return source === "csindex" ? `https://www.csindex.com.cn/csindex-home/perf/index-perf?indexCode=${csindexOfficialCode(code)}&startDate=${range.begin.replaceAll("-", "")}&endDate=${range.end.replaceAll("-", "")}` : `https://hq.cnindex.com.cn/market/market/getIndexDailyData?indexCode=${code}&startDate=${range.begin}&endDate=${range.end}`;
+}
+function parseIndexHistory(payload, source, instrument, range, today, observedAt) {
+  indexHistoryUrl(source, instrument.code, range);
+  if (!payload || String(payload.code) !== "200") throw new Error("\u5B98\u65B9\u65E5\u7EBF\u54CD\u5E94\u5931\u8D25");
+  let rows;
+  if (source === "csindex") {
+    if (!Array.isArray(payload.data)) throw new Error("\u4E2D\u8BC1\u65E5\u7EBF\u6570\u636E\u683C\u5F0F\u65E0\u6548");
+    rows = payload.data.map((row) => {
+      if (row?.indexCode !== csindexOfficialCode(instrument.code)) throw new Error("\u4E2D\u8BC1\u65E5\u7EBF\u6307\u6570\u8EAB\u4EFD\u4E0D\u7B26");
+      if (typeof row.tradeDate !== "string" || !/^\d{8}$/.test(row.tradeDate)) throw new Error("\u4E2D\u8BC1\u65E5\u7EBF\u4EA4\u6613\u65E5\u683C\u5F0F\u65E0\u6548");
+      return { date: row.tradeDate.replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3"), close: row.close, open: row.open, high: row.high, low: row.low };
+    });
+  } else {
+    const data = payload.data;
+    if (data?.indexCode !== instrument.code) throw new Error("\u56FD\u8BC1\u65E5\u7EBF\u6307\u6570\u8EAB\u4EFD\u4E0D\u7B26");
+    if (!Array.isArray(data.item) || !Array.isArray(data.data) || new Set(data.item).size !== data.item.length || !["timestamp", "close"].every((key) => data.item.includes(key))) throw new Error("\u56FD\u8BC1\u65E5\u7EBF\u5217\u5B9A\u4E49\u65E0\u6548");
+    const get = (row, key) => row[data.item.indexOf(key)];
+    rows = data.data.map((row) => {
+      if (!Array.isArray(row) || row.length !== data.item.length) throw new Error("\u56FD\u8BC1\u65E5\u7EBF\u884C\u957F\u5EA6\u65E0\u6548");
+      const timestamp = get(row, "timestamp");
+      if (typeof timestamp !== "number" || !Number.isSafeInteger(timestamp)) throw new Error("\u56FD\u8BC1\u65E5\u7EBF\u65F6\u95F4\u6233\u65E0\u6548");
+      const instant = new Date(timestamp + 8 * 36e5);
+      if (!Number.isFinite(instant.getTime()) || instant.toISOString().slice(11) !== "00:00:00.000Z") throw new Error("\u56FD\u8BC1\u65E5\u7EBF\u65F6\u95F4\u6233\u4E0D\u662F\u5317\u4EAC\u65F6\u95F4\u96F6\u70B9");
+      return { date: instant.toISOString().slice(0, 10), close: get(row, "close"), open: get(row, "open"), high: get(row, "high"), low: get(row, "low") };
+    });
+  }
+  if (rows.length > 1e4) throw new Error("\u5B98\u65B9\u65E5\u7EBF\u8D85\u8FC7\u5355\u6B21 10000 \u884C\u4E0A\u9650");
+  const dates = /* @__PURE__ */ new Set();
+  return rows.map((row) => {
+    if (!validReferenceDate(row.date, today) || row.date < range.begin || row.date > range.end) throw new Error(`\u5B98\u65B9\u65E5\u7EBF\u65E5\u671F\u975E\u6CD5\u3001\u672A\u6765\u6216\u8D85\u51FA\u8BF7\u6C42\u533A\u95F4\uFF1A${row.date}`);
+    if (dates.has(row.date)) throw new Error(`\u5B98\u65B9\u65E5\u7EBF\u65E5\u671F\u91CD\u590D\uFF1A${row.date}`);
+    dates.add(row.date);
+    if (typeof row.close !== "number" || !Number.isFinite(row.close) || row.close <= 0) throw new Error(`\u5B98\u65B9\u65E5\u7EBF\u6536\u76D8\u4EF7\u65E0\u6548\uFF1A${row.date}`);
+    const valid = (v) => typeof v === "number" && Number.isFinite(v) && v > 0;
+    if (valid(row.high) && valid(row.low) && (row.high < row.low || row.close > row.high || row.close < row.low || valid(row.open) && (row.open > row.high || row.open < row.low))) throw new Error(`\u5B98\u65B9\u65E5\u7EBF OHLC \u4E0D\u4E00\u81F4\uFF1A${row.date}`);
+    const [integer, decimal = ""] = String(row.close).split(".");
+    const raw = parseFixed(decimal ? `${integer}.${decimal.slice(0, SCALE_QTY)}` : integer, SCALE_QTY);
+    if (raw <= 0) throw new Error(`\u5B98\u65B9\u65E5\u7EBF\u6536\u76D8\u4EF7\u4F4E\u4E8E\u6709\u6548\u7CBE\u5EA6\uFF1A${row.date}`);
+    return {
+      instrumentId: instrument.id,
+      priceType: "CLOSE_PRICE",
+      value: formatFixed(raw, SCALE_QTY),
+      tradingDate: row.date,
+      provider: `${source}-history`,
+      quality: "FRESH",
+      observedAt
+    };
+  }).sort((a, b) => a.tradingDate.localeCompare(b.tradingDate));
+}
+async function loadJson(url) {
+  const response = await fetch(url, { signal: AbortSignal.timeout(15e3), headers: { "User-Agent": "Mozilla/5.0" } });
+  if (!response.ok) throw new Error(`\u5B98\u65B9\u65E5\u7EBF HTTP ${response.status}`);
+  if (!response.body) throw new Error("\u5B98\u65B9\u65E5\u7EBF\u54CD\u5E94\u4E3A\u7A7A");
+  const reader2 = response.body.getReader();
+  const chunks = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const part = await reader2.read();
+      if (part.done) break;
+      bytes += part.value.byteLength;
+      if (bytes > 10 * 1024 * 1024) throw new Error("\u5B98\u65B9\u65E5\u7EBF\u54CD\u5E94\u8D85\u8FC7 10 MB");
+      chunks.push(part.value);
+    }
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } finally {
+    await reader2.cancel();
+    reader2.releaseLock();
+  }
+}
+function createIndexHistoryProvider(source, today = todayLocal(), fetchJson5 = loadJson) {
+  return {
+    id: `${source}-history`,
+    supports: (instrument) => instrument.type === "INDEX" && /^(000|399)\d{3}$/.test(instrument.code),
+    async fetchQuote() {
+      return null;
+    },
+    async fetchHistory(instrument, range) {
+      const payload = await fetchJson5(indexHistoryUrl(source, instrument.code, range));
+      return parseIndexHistory(payload, source, instrument, range, today, (/* @__PURE__ */ new Date()).toISOString());
+    }
+  };
+}
+function createOfficialIndexHistoryProvider(today, fetchJson5 = loadJson) {
+  const blockedUntil2 = /* @__PURE__ */ new Map();
+  let lastRequestAt4 = 0;
+  return {
+    id: "official-index-history",
+    supports: (instrument) => instrument.type === "INDEX" && /^(000|399)\d{3}$/.test(instrument.code),
+    async fetchQuote() {
+      return null;
+    },
+    async fetchHistory(instrument, range) {
+      const sources = instrument.code.startsWith("000") ? ["csindex"] : ["cnindex", "csindex"];
+      const errors = [];
+      for (const source of sources) {
+        try {
+          if ((blockedUntil2.get(source) ?? 0) > Date.now()) throw new Error("\u4E0A\u6E38 403 \u540E\u9000\u907F 15 \u5206\u949F\uFF0C\u5C1A\u672A\u91CD\u65B0\u8BF7\u6C42");
+          if (fetchJson5 === loadJson) {
+            const wait = lastRequestAt4 + 1e3 - Date.now();
+            if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+            lastRequestAt4 = Date.now();
+          }
+          const points = await createIndexHistoryProvider(source, today ?? todayLocal(), fetchJson5).fetchHistory(instrument, range);
+          if (points.length) return points;
+        } catch (error) {
+          const message = String(error.message).slice(0, 200);
+          if (/HTTP 403/.test(message)) blockedUntil2.set(source, Date.now() + 15 * 6e4);
+          errors.push(`${source}: ${message}`);
+        }
+      }
+      if (errors.length) throw new Error(errors.join("\uFF1B"));
+      return [];
+    }
+  };
+}
+
 // plugin/server/src/market/provider.ts
 function createRegistry(providers) {
   return {
@@ -7077,12 +7301,12 @@ function createRegistry(providers) {
   };
 }
 function createDefaultRegistry() {
-  return createRegistry([createTencentProvider(), createEastmoneyProvider()]);
+  return createRegistry([createTencentProvider(), createEastmoneyProvider(), createOfficialIndexHistoryProvider()]);
 }
 
 // plugin/targets/mcp/server.ts
 var SERVER_NAME = "plug-funds";
-var SERVER_VERSION = "0.1.5";
+var SERVER_VERSION = "0.1.6";
 var PROTOCOL_VERSION = "2024-11-05";
 var str3 = (description) => ({ type: "string", description });
 var num4 = (description) => ({ type: "number", description });
