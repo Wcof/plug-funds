@@ -2,6 +2,7 @@
   "name": "plug-funds",
   "private": true,
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "description": "个人投资工作站 · DeepSeek Harness 插件（本地优先）",
   "scripts": {

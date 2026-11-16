@@ -20,8 +20,7 @@ target/
 .workbuddy/
 
 # 插件构建产物（源码在 plugin/ 下，npm run build / pack:dsh 重新生成）
-plugin/targets/dsh/investment/index.js
-plugin/targets/dsh/investment/web/
-plugin/targets/dsh/investment/mcp/
+# 例外：DSH 组合包产物必须随仓库提交——宿主从 git 安装时不执行构建，
+# 缺 index.js / web / mcp 会装不起来（插件索引收录也要求仓库里有可运行的包）。
 plugin/targets/mcp/index.js
 integrations/dsh/dist/
